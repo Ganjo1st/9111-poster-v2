@@ -18,44 +18,113 @@ class BrowserManager:
         self.wait = None
     
     def start(self):
+        """Запуск браузера с правильными настройками"""
         chrome_options = Options()
         if self.headless:
             chrome_options.add_argument("--headless=new")
+        
+        # Важные аргументы для стабильной работы
         chrome_options.add_argument("--no-sandbox")
         chrome_options.add_argument("--disable-dev-shm-usage")
+        chrome_options.add_argument("--disable-gpu")
         chrome_options.add_argument("--window-size=1920,1080")
+        chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+        chrome_options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
         
         self.driver = webdriver.Chrome(options=chrome_options)
         self.wait = WebDriverWait(self.driver, 30)
-        logger.info("Браузер запущен")
+        logger.info("✅ Браузер запущен")
         return True
     
     def stop(self):
         if self.driver:
             self.driver.quit()
+            logger.info("🛑 Браузер закрыт")
     
     def save_screenshot(self, name):
         self.driver.save_screenshot(name)
+        logger.info(f"📸 Скриншот: {name}")
     
-    def login(self):
-        logger.info("Вход на сайт...")
-        self.driver.get("https://9111.ru/login/")
-        time.sleep(3)
-        self.save_screenshot("1_login_page.png")
-        
-        email_input = self.wait.until(EC.presence_of_element_located((By.NAME, "email")))
-        email_input.send_keys(self.email)
-        
-        password_input = self.wait.until(EC.presence_of_element_located((By.NAME, "password")))
-        password_input.send_keys(self.password)
-        
-        submit = self.driver.find_element(By.XPATH, "//input[@type='submit']")
-        submit.click()
-        time.sleep(5)
-        
-        if self.user_id in self.driver.page_source:
-            logger.info("Вход успешен")
-            self.save_screenshot("2_after_login.png")
-            return True
-        logger.error("Вход не удался")
-        return False
+    def check_authorization(self) -> bool:
+        """Проверка авторизации ТОЛЬКО по содержимому страницы, НЕ ПО URL!"""
+        try:
+            page_source = self.driver.page_source
+            
+            # Проверяем наличие ID пользователя на странице
+            if self.user_id in page_source:
+                logger.info(f"✅ Найден ID пользователя {self.user_id} - авторизация подтверждена")
+                return True
+            
+            # Проверяем признаки авторизации
+            auth_indicators = ['Выход', 'Мои публикации', 'Баланс', 'Профиль']
+            for indicator in auth_indicators:
+                if indicator in page_source:
+                    logger.info(f"✅ Найден индикатор: '{indicator}'")
+                    return True
+            
+            logger.warning("⚠️ Признаки авторизации не найдены")
+            return False
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка проверки авторизации: {e}")
+            return False
+    
+    def login(self) -> bool:
+        """Вход на сайт с правильной проверкой"""
+        try:
+            logger.info("🔑 Вход на сайт...")
+            
+            # Сначала переходим на главную
+            self.driver.get("https://9111.ru/")
+            time.sleep(3)
+            self.save_screenshot("1_main_page.png")
+            
+            # Ищем и кликаем по кнопке "Вход"
+            try:
+                login_link = self.driver.find_element(By.XPATH, "//a[contains(text(), 'Вход')]")
+                login_link.click()
+                time.sleep(3)
+            except:
+                # Если не нашли, пробуем прямой переход
+                self.driver.get("https://9111.ru/login/")
+                time.sleep(3)
+            
+            self.save_screenshot("2_login_page.png")
+            
+            # Ждем поле email
+            email_input = WebDriverWait(self.driver, 10).until(
+                EC.presence_of_element_located((By.NAME, "email"))
+            )
+            email_input.clear()
+            email_input.send_keys(self.email)
+            logger.info("✅ Email введен")
+            
+            # Ждем поле пароля
+            password_input = WebDriverWait(self.driver, 10).until(
+                EC.presence_of_element_located((By.NAME, "password"))
+            )
+            password_input.clear()
+            password_input.send_keys(self.password)
+            logger.info("✅ Пароль введен")
+            
+            # Нажимаем кнопку входа
+            submit = self.driver.find_element(By.XPATH, "//input[@type='submit']")
+            submit.click()
+            logger.info("✅ Кнопка входа нажата")
+            
+            # Ждем загрузки
+            time.sleep(5)
+            self.save_screenshot("3_after_login.png")
+            
+            # ВАЖНО: Проверяем авторизацию по содержимому, НЕ ПО URL!
+            if self.check_authorization():
+                logger.info("🎉 Вход выполнен успешно!")
+                return True
+            else:
+                logger.error("❌ Не удалось подтвердить вход")
+                return False
+                
+        except Exception as e:
+            logger.error(f"❌ Ошибка входа: {e}")
+            self.save_screenshot("error.png")
+            return False
