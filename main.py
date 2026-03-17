@@ -1,32 +1,13 @@
-import os
-import sys
-import tempfile
-import requests
-from pathlib import Path
-
-# Добавляем путь к проекту
-sys.path.insert(0, str(Path(__file__).parent))
-
-import modules.telegram_bot_parser as tg_module
-from modules.config import Config
-from modules.logger import setup_logging
-from modules.publication_api import PublicationAPI
-from modules.rubric_mapper import get_rubric_id
-
-# Настройка логирования
-logger = setup_logging()
-
-
 def create_session_from_secrets():
-    """Создает сессию из секретов USER_HASH и UUK"""
+    """Создает сессию из полного набора кук"""
     
-    logger.info("🔄 Создаем сессию из секретов")
+    logger.info("🔄 Создаем сессию с полным набором кук")
     
     user_hash = Config.USER_HASH
-    uuk = Config.UUK
+    uuk = "cad1a52ec9d948e6cc9ef7cae9009203"  # Новое значение из файла!
     
-    if not user_hash or not uuk:
-        logger.error("❌ USER_HASH или UUK не заданы")
+    if not user_hash:
+        logger.error("❌ USER_HASH не задан")
         return None
     
     logger.info(f"✅ USER_HASH: {user_hash[:10]}...")
@@ -34,21 +15,21 @@ def create_session_from_secrets():
     
     session = requests.Session()
     
-    # Устанавливаем все возможные куки как в браузере
-    cookies = {
-        'user_hash': user_hash,
-        'uuk': uuk,
-        'PHPSESSID': '',  # Будет получена при первом запросе
-        '_ym_uid': '',    # Будет получена
-        '_ym_d': '',      # Будет получена
-        '_ym_isad': '2',
-        'tmr_lvid': '',
-        'tmr_lvidTS': '',
-    }
+    # Устанавливаем ВСЕ куки как в браузере
+    cookies = [
+        {'name': 'user_hash', 'value': user_hash, 'domain': '.9111.ru', 'path': '/'},
+        {'name': 'uuk', 'value': uuk, 'domain': '.9111.ru', 'path': '/'},
+        {'name': 'geo', 'value': '91-817-1', 'domain': '.9111.ru', 'path': '/'},
+        {'name': 'au', 'value': '%7B%22u%22%3A2368040%2C%22k%22%3A%22aa8ca3729252da5450cdb0862352503d%22%2C%22t%22%3A1773746119%7D', 'domain': '.9111.ru', 'path': '/'},
+    ]
     
-    for name, value in cookies.items():
-        if value:  # Только если есть значение
-            session.cookies.set(name, value, domain='.9111.ru')
+    for cookie in cookies:
+        session.cookies.set(
+            cookie['name'], 
+            cookie['value'],
+            domain=cookie['domain'],
+            path=cookie['path']
+        )
     
     # Заголовки как в браузере
     session.headers.update({
@@ -65,163 +46,8 @@ def create_session_from_secrets():
         'Cache-Control': 'max-age=0',
     })
     
+    # Выводим установленные куки для проверки
+    cookies_dict = session.cookies.get_dict()
+    logger.info(f"🍪 Установлены куки: {list(cookies_dict.keys())}")
+    
     return session
-
-
-def download_telegram_photo(photo_path: str) -> str | None:
-    """Скачивает фото из Telegram во временный файл"""
-    if not photo_path or not os.path.exists(photo_path):
-        return None
-    
-    try:
-        # Создаем временную копию
-        temp_dir = tempfile.mkdtemp()
-        temp_path = os.path.join(temp_dir, os.path.basename(photo_path))
-        
-        # Копируем файл
-        import shutil
-        shutil.copy2(photo_path, temp_path)
-        
-        logger.info(f"✅ Фото подготовлено: {temp_path}")
-        return temp_path
-    except Exception as e:
-        logger.error(f"❌ Ошибка при подготовке фото: {e}")
-        return None
-
-
-def get_telegram_posts():
-    """Получает посты из Telegram с фото"""
-    logger.info("🤖 Получаем посты из Telegram...")
-    
-    if not hasattr(tg_module, 'TelegramBotParser'):
-        logger.error("❌ Класс TelegramBotParser не найден")
-        return []
-    
-    ParserClass = tg_module.TelegramBotParser
-    
-    try:
-        parser = ParserClass(Config.TELEGRAM_TOKEN, Config.CHANNEL_ID)
-        logger.info("✅ Парсер создан")
-        
-        if hasattr(parser, 'parse_channel_posts'):
-            raw_posts = parser.parse_channel_posts()
-            
-            if raw_posts:
-                logger.info(f"📦 Получено {len(raw_posts)} сырых постов")
-                
-                # Преобразуем в нужный формат
-                posts = []
-                for raw in raw_posts:
-                    if isinstance(raw, dict):
-                        post = {
-                            'title': raw.get('text', '')[:100],
-                            'content': raw.get('text', ''),
-                            'photo_path': raw.get('photo_path'),
-                        }
-                        if post['content']:
-                            posts.append(post)
-                            logger.info(f"  Пост: {post['title'][:30]}... Фото: {'есть' if post['photo_path'] else 'нет'}")
-                
-                logger.info(f"✅ Преобразовано {len(posts)} постов")
-                return posts
-            
-        return []
-        
-    except Exception as e:
-        logger.error(f"❌ Ошибка парсинга: {e}")
-        return []
-
-
-def main():
-    logger.info("=" * 50)
-    logger.info("🚀 Запуск 9111 Poster")
-    logger.info("=" * 50)
-
-    # 1. Создаем сессию
-    session = create_session_from_secrets()
-    if not session:
-        logger.error("❌ Не удалось создать сессию")
-        return
-
-    # 2. Проверяем доступ к сайту
-    logger.info("🔍 Проверяем доступ к сайту...")
-    try:
-        response = session.get('https://9111.ru', timeout=30, allow_redirects=True)
-        logger.info(f"Главная страница: {response.status_code}")
-        
-        # Проверяем, авторизованы ли мы
-        if 'user_hash' in response.text:
-            logger.info("✅ Похоже, мы авторизованы (найден user_hash в ответе)")
-        else:
-            logger.warning("⚠️ Возможно, не авторизованы")
-            
-    except Exception as e:
-        logger.error(f"❌ Ошибка при проверке доступа: {e}")
-        return
-
-    # 3. Получаем посты
-    posts = get_telegram_posts()
-    if not posts:
-        logger.warning("❌ Нет постов")
-        return
-
-    logger.info(f"✅ Получено {len(posts)} постов")
-
-    # 4. Публикуем
-    pub_api = PublicationAPI(
-        session=session,
-        user_hash=Config.USER_HASH,
-        uuk=Config.UUK
-    )
-
-    successful = 0
-    temp_files = []
-    
-    for i, post in enumerate(posts, 1):
-        logger.info(f"--- 📝 Пост {i}/{len(posts)} ---")
-        
-        title = post.get("title", "").strip()
-        content = post.get("content", "").strip()
-        photo_path = post.get("photo_path")
-        
-        if not content:
-            logger.warning(f"⚠️ Пост {i} пустой")
-            continue
-            
-        logger.info(f"Заголовок: {title}")
-        
-        # Подготавливаем фото если есть
-        image_path = None
-        if photo_path:
-            image_path = download_telegram_photo(photo_path)
-            if image_path:
-                temp_files.append(image_path)
-        
-        success = pub_api.create_publication(
-            title=title,
-            content=content,
-            rubric_name=Config.DEFAULT_RUBRIC,
-            tags=Config.DEFAULT_TAGS,
-            image_path=image_path
-        )
-        
-        if success:
-            successful += 1
-            logger.info(f"✅ Пост {i} опубликован")
-        else:
-            logger.error(f"❌ Ошибка поста {i}")
-
-    # 5. Очищаем временные файлы
-    for temp_file in temp_files:
-        try:
-            os.remove(temp_file)
-            os.rmdir(os.path.dirname(temp_file))
-        except:
-            pass
-
-    logger.info(f"📊 Итог: {successful}/{len(posts)}")
-    logger.info("=" * 50)
-
-
-if __name__ == "__main__":
-    main()
