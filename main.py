@@ -49,8 +49,11 @@ def safe_call_method(obj, method_name, *args, **kwargs):
             logger.info(f"✅ {method_name} выполнен")
             return result
         except Exception as e:
-            logger.warning(f"Ошибка при вызове {method_name}: {e}")
-    return None
+            logger.error(f"❌ Ошибка в {method_name}: {e}")
+            return None
+    else:
+        logger.warning(f"⚠️ Метод {method_name} не найден")
+        return None
 
 
 def get_session_from_cookies(cookies_path):
@@ -225,23 +228,13 @@ def main():
         logger.error("❌ Не удалось найти класс авторизации")
         return
 
-    # 2. Авторизация
+    # 2. Создаем объект авторизации с email и password
     try:
         auth = AuthClass(Config.NINTH_EMAIL, Config.NINTH_PASSWORD)
+        logger.info("✅ Объект авторизации создан")
         
-        # Пробуем войти через cookies если есть
-        cookies_path = safe_get_attr(auth, 'cookies_file', 'sessions/cookies.pkl')
-        if os.path.exists(cookies_path):
-            logger.info(f"🍪 Найден файл cookies: {cookies_path}")
-            login_result = safe_call_method(auth, 'login_with_cookies', cookies_path)
-            if login_result:
-                logger.info("✅ Вход через cookies выполнен")
-            else:
-                logger.warning("⚠️ Вход через cookies не удался, пробуем login_with_credentials")
-                login_result = safe_call_method(auth, 'login_with_credentials', Config.NINTH_EMAIL, Config.NINTH_PASSWORD)
-        else:
-            logger.info("🔐 Файл cookies не найден, выполняем login_with_credentials")
-            login_result = safe_call_method(auth, 'login_with_credentials', Config.NINTH_EMAIL, Config.NINTH_PASSWORD)
+        # Пробуем войти через login (основной метод)
+        login_result = safe_call_method(auth, 'login')
         
         if not login_result:
             logger.error("❌ Ошибка авторизации")
@@ -249,7 +242,7 @@ def main():
         
         logger.info("✅ Login выполнен успешно")
         
-        # Получаем путь к cookies файлу (должен создаться после входа)
+        # Получаем путь к cookies файлу
         cookies_path = safe_get_attr(auth, 'cookies_file', 'sessions/cookies.pkl')
         logger.info(f"📁 Путь к cookies: {cookies_path}")
         
