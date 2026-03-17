@@ -2,9 +2,6 @@
 # -*- coding: utf-8 -*-
 
 from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
 import time
 import logging
@@ -12,13 +9,12 @@ import logging
 logger = logging.getLogger('browser_manager')
 
 class BrowserManager:
-    def __init__(self, email: str, password: str, user_id: str, headless: bool = False):
-        self.email = email
-        self.password = password
+    def __init__(self, user_hash: str, uuk: str, user_id: str, headless: bool = False):
+        self.user_hash = user_hash
+        self.uuk = uuk
         self.user_id = user_id
         self.headless = headless
         self.driver = None
-        self.wait = None
     
     def start(self):
         chrome_options = Options()
@@ -28,23 +24,9 @@ class BrowserManager:
         chrome_options.add_argument("--no-sandbox")
         chrome_options.add_argument("--disable-dev-shm-usage")
         chrome_options.add_argument("--window-size=1920,1080")
-        
-        # Реальные заголовки браузера
         chrome_options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-        chrome_options.add_argument("--accept-lang=ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")
-        chrome_options.add_argument("--accept=text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8")
-        
-        # Скрываем автоматизацию
-        chrome_options.add_argument("--disable-blink-features=AutomationControlled")
-        chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
-        chrome_options.add_experimental_option('useAutomationExtension', False)
         
         self.driver = webdriver.Chrome(options=chrome_options)
-        self.wait = WebDriverWait(self.driver, 30)
-        
-        # Дополнительно скрываем webdriver
-        self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-        
         logger.info("✅ Браузер запущен")
         return True
     
@@ -57,6 +39,34 @@ class BrowserManager:
         self.driver.save_screenshot(name)
         logger.info(f"📸 Скриншот: {name}")
     
+    def set_cookies(self):
+        """Устанавливает куки для авторизации."""
+        logger.info("🍪 Устанавливаем куки авторизации...")
+        # Сначала нужно открыть домен, чтобы можно было установить куки
+        self.driver.get("https://9111.ru")
+        time.sleep(2)
+        
+        # Куки из вашего файла
+        cookies = [
+            {'name': 'user_hash', 'value': self.user_hash, 'domain': '.9111.ru'},
+            {'name': 'uuk', 'value': self.uuk, 'domain': '.9111.ru'},
+            # Можно добавить и другие куки, если нужно, но эти две — ключевые.
+            # {'name': 'au', 'value': '{"u":2368040,"k":"aa8ca3729252da5450cdb0862352503d","t":1773721763}', 'domain': '.9111.ru'},
+            # {'name': 'csrf_token', 'value': '{"token":"da7c5e304ead459418b7bcc8ac882ae70822a6660d9ee396240acf2581e129c3","ip":"5.44.168.228"}', 'domain': '.9111.ru'},
+        ]
+        
+        for cookie in cookies:
+            try:
+                self.driver.add_cookie(cookie)
+                logger.info(f"   Установлена кука: {cookie['name']}")
+            except Exception as e:
+                logger.warning(f"   Не удалось установить куку {cookie['name']}: {e}")
+        
+        logger.info("✅ Куки установлены")
+        # После установки кук перезагрузим страницу
+        self.driver.refresh()
+        time.sleep(3)
+    
     def check_authorization(self):
         try:
             page_source = self.driver.page_source
@@ -68,84 +78,23 @@ class BrowserManager:
             return False
     
     def login(self):
+        """'Вход' через установку кук."""
         try:
-            logger.info("🔑 Вход на сайт...")
+            logger.info("🔑 Начинаем процесс 'входа' через куки...")
             
-            # Сначала заходим на главную с паузой
-            self.driver.get("https://9111.ru/")
-            time.sleep(5)
-            self.save_screenshot("1_main_page.png")
+            # Переходим на главную и устанавливаем куки
+            self.set_cookies()
+            self.save_screenshot("1_after_cookies.png")
             
-            # Даже если 403, пробуем зайти на логин
-            logger.info("🌐 Переходим на страницу логина...")
-            self.driver.get("https://9111.ru/login/")
-            time.sleep(5)
-            self.save_screenshot("2_login_page.png")
-            
-            # Пробуем найти поля ввода разными способами
-            try:
-                # Способ 1: по name
-                email_input = WebDriverWait(self.driver, 10).until(
-                    EC.presence_of_element_located((By.NAME, "email"))
-                )
-            except:
-                try:
-                    # Способ 2: по CSS селектору
-                    email_input = self.driver.find_element(By.CSS_SELECTOR, "input[type='email']")
-                except:
-                    try:
-                        # Способ 3: по placeholder
-                        email_input = self.driver.find_element(By.XPATH, "//input[contains(@placeholder, 'mail') or contains(@placeholder, 'логин')]")
-                    except Exception as e:
-                        logger.error(f"❌ Не удалось найти поле email: {e}")
-                        return False
-            
-            email_input.clear()
-            email_input.send_keys(self.email)
-            logger.info("✅ Email введен")
-            time.sleep(1)
-            
-            # Ищем поле пароля
-            try:
-                password_input = self.driver.find_element(By.NAME, "password")
-            except:
-                try:
-                    password_input = self.driver.find_element(By.CSS_SELECTOR, "input[type='password']")
-                except Exception as e:
-                    logger.error(f"❌ Не удалось найти поле пароля: {e}")
-                    return False
-            
-            password_input.clear()
-            password_input.send_keys(self.password)
-            logger.info("✅ Пароль введен")
-            time.sleep(1)
-            
-            # Ищем кнопку входа
-            try:
-                submit = self.driver.find_element(By.XPATH, "//input[@type='submit'] | //button[@type='submit']")
-            except:
-                try:
-                    submit = self.driver.find_element(By.XPATH, "//button[contains(text(), 'Войти') or contains(text(), 'Вход')]")
-                except Exception as e:
-                    logger.error(f"❌ Не удалось найти кнопку входа: {e}")
-                    return False
-            
-            submit.click()
-            logger.info("✅ Кнопка входа нажата")
-            
-            # Ждем результат
-            time.sleep(7)
-            self.save_screenshot("3_after_login.png")
-            
-            # Проверяем авторизацию
+            # Проверяем, авторизованы ли мы
             if self.check_authorization():
-                logger.info("🎉 ВХОД ВЫПОЛНЕН УСПЕШНО!")
+                logger.info("🎉 УСПЕХ! Авторизация по кукам сработала.")
                 return True
             else:
-                logger.error("❌ Вход не удался")
+                logger.error("❌ Не удалось подтвердить авторизацию по кукам.")
                 return False
                 
         except Exception as e:
-            logger.error(f"❌ Ошибка входа: {e}")
+            logger.error(f"❌ Ошибка при установке кук: {e}")
             self.save_screenshot("error.png")
             return False
