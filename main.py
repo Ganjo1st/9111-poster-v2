@@ -7,7 +7,7 @@ from pathlib import Path
 # Добавляем путь к проекту для импортов
 sys.path.insert(0, str(Path(__file__).parent))
 
-from modules.auth import Auth9111
+from modules.github_actions_auth import Auth9111
 from modules.bypass import BypassManager
 from modules.config import Config
 from modules.logger import setup_logging, log_function_call
