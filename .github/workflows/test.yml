@@ -1,4 +1,4 @@
-name: Test Auth with zapret
+name: Test Auth with zapret (nfqws mode)
 
 on:
   workflow_dispatch:
@@ -15,10 +15,10 @@ jobs:
         with:
           python-version: '3.10'
       
-      - name: Install Chrome
+      - name: Install Chrome and iptables
         run: |
           sudo apt-get update
-          sudo apt-get install -y google-chrome-stable
+          sudo apt-get install -y google-chrome-stable iptables
           google-chrome --version
       
       - name: Setup zapret
@@ -26,17 +26,18 @@ jobs:
           chmod +x ./setup_zapret.sh
           sudo ./setup_zapret.sh
       
-      - name: Run zapret
+      - name: Run nfqws (kernel-level DPI bypass)
         run: |
-          sudo /usr/local/bin/tpws --port=989 --bind-addr=127.0.0.1 --split-pos=2 --oob --disorder --daemon
-          echo "✅ zapret запущен"
+          # Запускаем nfqws для обхода DPI
+          sudo /usr/local/bin/nfqws --daemon --qnum=989 --dpi-desync=split --dpi-desync-split-seq
+          echo "✅ nfqws запущен"
           sleep 3
-          ps aux | grep tpws
+          ps aux | grep nfqws
       
-      - name: Test connection through zapret
+      - name: Test connection (direct)
         run: |
-          echo "Проверяем доступ к 9111.ru через zapret..."
-          curl -I https://9111.ru --proxy 127.0.0.1:989 --connect-timeout 10 || echo "❌ Сайт недоступен"
+          echo "Проверяем доступ к 9111.ru..."
+          curl -I https://9111.ru --connect-timeout 10 || echo "❌ Сайт недоступен"
       
       - name: Install Python dependencies
         run: |
@@ -50,7 +51,6 @@ jobs:
           NINTH_EMAIL: ${{ secrets.NINTH_EMAIL }}
           NINTH_PASSWORD: ${{ secrets.NINTH_PASSWORD }}
         run: |
-          # Chrome будет использовать системные настройки
           python src/poster.py
       
       - name: Upload screenshots
@@ -63,4 +63,4 @@ jobs:
       - name: Cleanup
         if: always()
         run: |
-          sudo pkill tpws || true
+          sudo pkill nfqws || true
