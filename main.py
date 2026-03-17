@@ -1,5 +1,6 @@
 import os
 import sys
+import pickle
 from pathlib import Path
 
 # Добавляем путь к проекту
@@ -27,6 +28,77 @@ def get_auth_class():
             return getattr(auth_module, name)
     
     logger.error("Не найден класс авторизации")
+    return None
+
+
+def get_session_from_auth(auth):
+    """Пытается получить session из объекта auth разными способами"""
+    
+    # Способ 1: прямой атрибут session
+    if hasattr(auth, 'session'):
+        logger.info("✅ Найден auth.session")
+        return auth.session
+    
+    # Способ 2: атрибут _session
+    if hasattr(auth, '_session'):
+        logger.info("✅ Найден auth._session")
+        return auth._session
+    
+    # Способ 3: метод get_session()
+    if hasattr(auth, 'get_session') and callable(auth.get_session):
+        try:
+            session = auth.get_session()
+            if session:
+                logger.info("✅ Получена сессия через get_session()")
+                return session
+        except:
+            pass
+    
+    # Способ 4: используем driver для создания сессии
+    if hasattr(auth, 'driver') and auth.driver:
+        logger.info("🔄 Пробуем создать сессию из driver")
+        try:
+            import requests
+            from selenium.webdriver.common.by import By
+            
+            session = requests.Session()
+            # Копируем cookies из driver в session
+            for cookie in auth.driver.get_cookies():
+                session.cookies.set(cookie['name'], cookie['value'])
+            
+            # Добавляем стандартные headers
+            session.headers.update({
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
+                'Accept-Encoding': 'gzip, deflate, br',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1',
+            })
+            
+            logger.info("✅ Сессия создана из cookies driver")
+            return session
+        except Exception as e:
+            logger.warning(f"Не удалось создать сессию из driver: {e}")
+    
+    # Способ 5: загружаем cookies из файла
+    if hasattr(auth, 'cookies_file') and auth.cookies_file:
+        logger.info(f"🔄 Пробуем загрузить cookies из {auth.cookies_file}")
+        try:
+            import requests
+            with open(auth.cookies_file, 'rb') as f:
+                cookies = pickle.load(f)
+            
+            session = requests.Session()
+            for cookie in cookies:
+                session.cookies.set(cookie['name'], cookie['value'])
+            
+            logger.info("✅ Сессия создана из cookies файла")
+            return session
+        except Exception as e:
+            logger.warning(f"Не удалось загрузить cookies: {e}")
+    
+    logger.error("❌ Не удалось получить session ни одним способом")
     return None
 
 
@@ -59,30 +131,6 @@ def get_telegram_posts():
             except Exception as e:
                 logger.warning(f"Ошибка в parse_channel_posts(): {e}")
         
-        # Пробуем метод get_updates
-        if hasattr(parser, 'get_updates'):
-            logger.info("Вызываем parser.get_updates()")
-            try:
-                updates = parser.get_updates()
-                if updates:
-                    logger.info(f"✅ Получено {len(updates)} обновлений")
-                    # Преобразуем updates в посты
-                    posts = []
-                    for update in updates:
-                        if 'message' in update:
-                            msg = update['message']
-                            post = {
-                                'title': msg.get('text', '')[:100],
-                                'content': msg.get('text', ''),
-                                'date': msg.get('date', '')
-                            }
-                            posts.append(post)
-                    if posts:
-                        logger.info(f"✅ Преобразовано {len(posts)} постов из get_updates")
-                        return posts
-            except Exception as e:
-                logger.warning(f"Ошибка в get_updates(): {e}")
-        
     except Exception as e:
         logger.error(f"❌ Ошибка при создании парсера: {e}")
         logger.error(f"   Ожидаемая сигнатура: __init__(bot_token, channel_id)")
@@ -111,34 +159,16 @@ def main():
                 logger.error("❌ Ошибка авторизации")
                 return
         
-        # Проверяем наличие session разными способами
-        session = None
+        logger.info("✅ Авторизация выполнена")
         
-        # Способ 1: прямой атрибут session
-        if hasattr(auth, 'session'):
-            session = auth.session
-            logger.info("✅ Найден auth.session")
-        
-        # Способ 2: атрибут _session
-        elif hasattr(auth, '_session'):
-            session = auth._session
-            logger.info("✅ Найден auth._session")
-        
-        # Способ 3: метод get_session()
-        elif hasattr(auth, 'get_session') and callable(auth.get_session):
-            session = auth.get_session()
-            logger.info("✅ Получена сессия через get_session()")
+        # Получаем session
+        session = get_session_from_auth(auth)
         
         if session is None:
-            logger.error("❌ Не удалось получить session из объекта авторизации")
-            # Выводим все атрибуты объекта для отладки
-            logger.info("Доступные атрибуты объекта auth:")
-            for attr in dir(auth):
-                if not attr.startswith('_'):
-                    logger.info(f"  - {attr}")
+            logger.error("❌ Не удалось получить session")
             return
             
-        logger.info("✅ Авторизация успешна, сессия получена")
+        logger.info("✅ Сессия получена успешно")
         
     except Exception as e:
         logger.error(f"❌ Ошибка при авторизации: {e}")
