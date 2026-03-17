@@ -13,8 +13,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger('poster')
 
-NINTH_EMAIL = os.getenv('NINTH_EMAIL')
-NINTH_PASSWORD = os.getenv('NINTH_PASSWORD')
+USER_HASH = os.getenv('USER_HASH')
+UUK = os.getenv('UUK')
 USER_ID = '2368040'
 
 def main():
@@ -22,16 +22,15 @@ def main():
     logger.info("🚀 ТЕСТОВЫЙ ЗАПУСК")
     logger.info("="*50)
     
-    if not NINTH_EMAIL or not NINTH_PASSWORD:
-        logger.error("❌ Не заданы EMAIL или PASSWORD")
+    if not USER_HASH or not UUK:
+        logger.error("❌ Не заданы USER_HASH или UUK в секретах!")
         sys.exit(1)
     
-    logger.info(f"📧 Email: {NINTH_EMAIL[:3]}...")
     logger.info(f"🆔 ID для проверки: {USER_ID}")
     
     browser = BrowserManager(
-        email=NINTH_EMAIL,
-        password=NINTH_PASSWORD,
+        user_hash=USER_HASH,
+        uuk=UUK,
         user_id=USER_ID,
         headless=True
     )
@@ -42,7 +41,7 @@ def main():
     
     if browser.login():
         logger.info("="*50)
-        logger.info("✅ ТЕСТ ПРОЙДЕН - АВТОРИЗАЦИЯ РАБОТАЕТ!")
+        logger.info("✅ ТЕСТ ПРОЙДЕН")
         logger.info("="*50)
     else:
         logger.error("="*50)
