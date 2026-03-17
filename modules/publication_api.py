@@ -16,7 +16,6 @@ class PublicationAPI:
     """Класс для создания публикаций через HTTP-запросы."""
 
     BASE_URL = "https://9111.ru"
-    ADD_URL = f"{BASE_URL}/pubs/add/"
     ADD_TITLE_URL = f"{BASE_URL}/pubs/add/title/"
 
     def __init__(self, session: requests.Session, user_hash: str, uuk: str):
@@ -41,6 +40,7 @@ class PublicationAPI:
             'Sec-Fetch-Mode': 'navigate',
             'Sec-Fetch-Site': 'none',
             'Sec-Fetch-User': '?1',
+            'Cache-Control': 'max-age=0',
         })
         
         # Устанавливаем куки
@@ -56,40 +56,8 @@ class PublicationAPI:
             suffix = ''.join(random.choices(string.ascii_lowercase, k=3))
             return f"{title} {suffix}"
         else:
-            # Для длинных заголовков изменяем 30% символов
-            chars = list(title)
-            num_to_change = max(1, int(len(chars) * 0.3))
-            for _ in range(num_to_change):
-                idx = random.randint(0, len(chars) - 1)
-                # Заменяем на похожий символ или просто другую букву
-                if chars[idx].isalpha():
-                    if chars[idx].islower():
-                        chars[idx] = random.choice('абвгдежзиклмнопрстуфхцчшщъыьэюя')
-                    else:
-                        chars[idx] = random.choice('АБВГДЕЖЗИКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ')
-            return ''.join(chars)
-
-    def _select_category(self) -> bool:
-        """Выбирает категорию 'Новость, статья'"""
-        logger.info("Выбираем категорию 'Новость, статья'...")
-        
-        try:
-            response = self.session.get(self.ADD_URL, timeout=30)
-            if response.status_code != 200:
-                logger.error(f"❌ Не удалось загрузить страницу выбора категории: {response.status_code}")
-                return False
-            
-            # Ищем ссылку на создание новости
-            soup = BeautifulSoup(response.text, 'html.parser')
-            # В реальности тут нужно найти правильную ссылку
-            # Пока просто переходим напрямую
-            self.session.get(self.ADD_TITLE_URL)
-            logger.info("✅ Перешли на страницу создания")
-            return True
-            
-        except Exception as e:
-            logger.error(f"❌ Ошибка при выборе категории: {e}")
-            return False
+            # Для длинных заголовков добавляем случайную цифру в конец
+            return f"{title} {random.randint(1, 999)}"
 
     def create_publication(
         self,
@@ -115,32 +83,76 @@ class PublicationAPI:
         original_title = title
         title = self._make_title_unique(title)
         if title != original_title:
-            logger.info(f"Заголовок изменен для уникальности: {title[:50]}...")
+            logger.info(f"Заголовок изменен для уникальности: {title}")
 
         # 2. Получаем ID рубрики
         rubric_id = get_rubric_id(rubric_name)
         logger.info(f"Рубрика: '{rubric_name}' (ID: {rubric_id})")
 
-        # 3. Выбираем категорию
-        if not self._select_category():
-            logger.error("❌ Не удалось выбрать категорию")
-            return False
+        # 3. Сначала заходим на главную, чтобы получить сессионные куки
+        logger.info("Загружаем главную страницу...")
+        try:
+            main_response = self.session.get('https://9111.ru', timeout=30, allow_redirects=True)
+            logger.info(f"Главная страница вернула статус: {main_response.status_code}")
+            time.sleep(2)
+        except Exception as e:
+            logger.warning(f"Ошибка при загрузке главной: {e}")
 
-        # 4. Загружаем страницу создания
-        logger.info("Загружаем страницу создания...")
+        # 4. Загружаем страницу создания напрямую (без выбора категории)
+        logger.info("Загружаем страницу создания публикации...")
         time.sleep(2)
         
         try:
-            get_response = self.session.get(self.ADD_TITLE_URL, timeout=30)
+            # Добавляем Referer
+            headers = {
+                'Referer': 'https://9111.ru/',
+            }
+            
+            get_response = self.session.get(
+                self.ADD_TITLE_URL, 
+                timeout=30, 
+                allow_redirects=True,
+                headers=headers
+            )
+            
+            logger.info(f"Статус загрузки страницы: {get_response.status_code}")
+            logger.info(f"URL после загрузки: {get_response.url}")
+            
             if get_response.status_code != 200:
                 logger.error(f"❌ Не удалось загрузить страницу: {get_response.status_code}")
+                # Сохраняем часть ответа для отладки
+                logger.error(f"Первые 500 символов ответа: {get_response.text[:500]}")
                 return False
+                
         except Exception as e:
             logger.error(f"❌ Ошибка загрузки: {e}")
             return False
 
-        # 5. Подготавливаем данные
-        form_data = {
+        # 5. Извлекаем скрытые поля формы
+        soup = BeautifulSoup(get_response.text, "html.parser")
+        form = soup.find("form", {"id": "form_create_topic_group"})
+        
+        form_data = {}
+        if form:
+            # Собираем все input поля
+            for input_tag in form.find_all("input"):
+                name = input_tag.get("name")
+                value = input_tag.get("value", "")
+                if name:
+                    form_data[name] = value
+            
+            # Собираем textarea
+            for textarea in form.find_all("textarea"):
+                name = textarea.get("name")
+                if name:
+                    form_data[name] = textarea.text
+            
+            logger.info(f"✅ Найдено полей в форме: {len(form_data)}")
+        else:
+            logger.warning("⚠️ Форма не найдена, будем использовать минимальные данные")
+
+        # 6. Добавляем обязательные поля
+        form_data.update({
             "title": title,
             "content": content,
             "rubric_id": str(rubric_id),
@@ -148,57 +160,72 @@ class PublicationAPI:
             "user_hash": self.user_hash,
             "uuk": self.uuk,
             "submit": "Опубликовать",
-        }
+        })
 
-        # Если есть фото, добавляем
-        if image_path:
-            try:
-                with open(image_path, 'rb') as f:
-                    files = {'images[]': (image_path, f, 'image/jpeg')}
-                    form_data['has_images'] = '1'
-            except Exception as e:
-                logger.warning(f"⚠️ Не удалось подготовить фото: {e}")
+        logger.info(f"📦 Отправляем данные (всего полей: {len(form_data)})")
 
-        logger.info(f"📦 Отправляем данные...")
-
-        # 6. Отправляем POST
+        # 7. Отправляем POST
         try:
-            time.sleep(2)
+            time.sleep(3)
             
-            if image_path and 'files' in locals():
-                response = self.session.post(
-                    self.ADD_TITLE_URL,
-                    data=form_data,
-                    files=files,
-                    allow_redirects=True,
-                    timeout=30,
-                )
+            # Подготавливаем заголовки для POST
+            post_headers = {
+                'Referer': self.ADD_TITLE_URL,
+                'Origin': self.BASE_URL,
+            }
+            
+            # Если есть фото, используем multipart/form-data
+            if image_path and os.path.exists(image_path):
+                logger.info(f"📸 Загружаем фото: {image_path}")
+                with open(image_path, 'rb') as f:
+                    files = {
+                        'images[]': (os.path.basename(image_path), f, 'image/jpeg')
+                    }
+                    form_data['has_images'] = '1'
+                    
+                    response = self.session.post(
+                        self.ADD_TITLE_URL,
+                        data=form_data,
+                        files=files,
+                        allow_redirects=True,
+                        timeout=30,
+                        headers=post_headers
+                    )
             else:
+                # Обычный POST
                 response = self.session.post(
                     self.ADD_TITLE_URL,
                     data=form_data,
                     allow_redirects=True,
                     timeout=30,
+                    headers=post_headers
                 )
 
             logger.info(f"🌐 Статус ответа: {response.status_code}")
             logger.info(f"📍 URL после запроса: {response.url}")
 
-            # 7. Проверяем результат
+            # 8. Проверяем результат
             if response.status_code == 200:
                 response_text = response.text.lower()
                 
                 # Проверяем на успех
-                if "спасибо" in response_text or "публикация успешно" in response_text:
-                    logger.info("✅ Публикация успешно создана!")
-                    return True
+                success_phrases = [
+                    "спасибо", "публикация успешно", "ваша публикация",
+                    "успешно добавлена", "опубликована", "благодарим"
+                ]
+                
+                for phrase in success_phrases:
+                    if phrase in response_text:
+                        logger.info(f"✅ Публикация успешно создана! (найдено: '{phrase}')")
+                        return True
                 
                 # Проверяем на ошибку уникальности
                 if "уникален" in response_text:
                     logger.warning("⚠️ Заголовок не уникален, пробуем еще раз с другим")
-                    # Можно рекурсивно попробовать еще раз
+                    # Рекурсивно пробуем с более уникальным заголовком
+                    new_title = f"{original_title} {random.randint(1000, 9999)}"
                     return self.create_publication(
-                        self._make_title_unique(original_title),
+                        new_title,
                         content,
                         rubric_name,
                         tags,
@@ -212,6 +239,9 @@ class PublicationAPI:
                     logger.error(f"❌ Ошибка: {error_div.text.strip()}")
                 else:
                     logger.warning("⚠️ Неизвестный ответ, но статус 200")
+                    # Сохраняем ответ для отладки
+                    with open(f"debug_response_{int(time.time())}.html", "w") as f:
+                        f.write(response.text)
                 return False
                 
             else:
