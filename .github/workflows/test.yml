@@ -28,16 +28,16 @@ jobs:
       
       - name: Create fake TLS data with proper permissions
         run: |
-          # Создаем файл в домашней директории и даем права
-          echo -n -e '\x16\x03\x01\x02\x00\x01\x00\x01\xfc\x03\x03' > /tmp/fake_tls.bin
-          sudo chmod 644 /tmp/fake_tls.bin
-          ls -la /tmp/fake_tls.bin
-          echo "✅ Создан файл для fake TLS"
+          # Создаем файл в домашней директории root
+          sudo bash -c 'echo -n -e "\x16\x03\x01\x02\x00\x01\x00\x01\xfc\x03\x03" > /root/fake_tls.bin'
+          sudo chmod 644 /root/fake_tls.bin
+          sudo ls -la /root/fake_tls.bin
+          echo "✅ Создан файл для fake TLS в /root/"
       
       - name: Run nfqws
         run: |
           # Запускаем nfqws с правильными параметрами
-          sudo /usr/local/bin/nfqws --daemon --qnum=989 --dpi-desync=fake,split --dpi-desync-fake-tls=/tmp/fake_tls.bin --dpi-desync-split-pos=2
+          sudo /usr/local/bin/nfqws --daemon --qnum=989 --dpi-desync=fake,split --dpi-desync-fake-tls=/root/fake_tls.bin --dpi-desync-split-pos=2
           echo "✅ nfqws запущен"
           sleep 3
           ps aux | grep nfqws
@@ -72,4 +72,4 @@ jobs:
         if: always()
         run: |
           sudo pkill nfqws || true
-          rm -f /tmp/fake_tls.bin
+          sudo rm -f /root/fake_tls.bin
