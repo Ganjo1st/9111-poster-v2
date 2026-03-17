@@ -1,69 +1,12 @@
-name: Test Auth with zapret (pre-built)
-
-on:
-  workflow_dispatch:
-
-jobs:
-  test:
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
-      
-      - name: Install Chrome
+      - name: Run zapret
         run: |
-          sudo apt-get update
-          sudo apt-get install -y google-chrome-stable
-      
-      - name: Setup zapret
-        run: |
-          chmod +x ./setup_zapret.sh
-          sudo ./setup_zapret.sh
-      
-      - name: Run zapret in aggressive mode
-        run: |
-          # Запускаем с самыми агрессивными настройками
-          sudo /usr/local/bin/tpws --port=989 --bind-addr=127.0.0.1 --split-http --split-tls --disorder --oob --daemon
+          # Запускаем с правильными параметрами для v70
+          sudo /usr/local/bin/tpws --port=989 --bind-addr=127.0.0.1 --split-pos=2 --oob --disorder --daemon
           echo "✅ zapret запущен"
           sleep 3
           ps aux | grep tpws
       
       - name: Test connection
         run: |
-          echo "Проверяем доступ к сайту напрямую..."
-          curl -I https://9111.ru --connect-timeout 10 || echo "Сайт недоступен напрямую"
-          
-          echo "Проверяем через zapret прокси..."
-          curl -I https://9111.ru --proxy 127.0.0.1:989 --connect-timeout 10 || echo "Через прокси тоже не работает"
-      
-      - name: Install Python dependencies
-        run: |
-          pip install selenium
-      
-      - name: Create screenshots dir
-        run: mkdir -p screenshots
-      
-      - name: Run test
-        env:
-          NINTH_EMAIL: ${{ secrets.NINTH_EMAIL }}
-          NINTH_PASSWORD: ${{ secrets.NINTH_PASSWORD }}
-        run: |
-          # Chrome должен использовать системные настройки
-          python src/poster.py
-      
-      - name: Upload screenshots
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: screenshots
-          path: "*.png"
-      
-      - name: Cleanup
-        if: always()
-        run: |
-          sudo pkill tpws || true
+          echo "Проверяем доступ к сайту через zapret..."
+          curl -I https://9111.ru --connect-timeout 10 --proxy 127.0.0.1:989 || echo "Сайт недоступен"
