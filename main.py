@@ -5,7 +5,7 @@ from pathlib import Path
 # Добавляем путь к проекту
 sys.path.insert(0, str(Path(__file__).parent))
 
-# Импортируем модуль целиком, чтобы не зависеть от имени класса
+# Импортируем модуль целиком
 import modules.github_actions_auth as auth_module
 from modules.config import Config
 from modules.logger import setup_logging
@@ -18,19 +18,15 @@ logger = setup_logging()
 
 
 def get_auth_class():
-    """Получает класс авторизации из модуля (может называться по-разному)"""
-    possible_names = ['Auth9111', 'GithubActionsAuth', 'Auth', 'GitHubActionsAuth']
+    """Получает класс авторизации из модуля"""
+    possible_names = ['GitHubActionsAuth', 'Auth9111', 'GithubActionsAuth', 'Auth']
     
     for name in possible_names:
         if hasattr(auth_module, name):
             logger.info(f"Найден класс авторизации: {name}")
             return getattr(auth_module, name)
     
-    # Если ничего не найдено, выводим все атрибуты модуля для отладки
-    logger.error("Не найден класс авторизации. Доступные атрибуты:")
-    for attr in dir(auth_module):
-        if not attr.startswith('_'):
-            logger.error(f"  - {attr}")
+    logger.error("Не найден класс авторизации")
     return None
 
 
@@ -45,12 +41,20 @@ def main():
         logger.error("❌ Не удалось найти класс авторизации")
         return
 
-    # 2. Авторизация
+    # 2. Авторизация с передачей email и password
     try:
-        auth = AuthClass()
-        if not auth.login(Config.NINTH_EMAIL, Config.NINTH_PASSWORD):
-            logger.error("❌ Ошибка авторизации")
-            return
+        # Передаем email и password при создании объекта
+        auth = AuthClass(Config.NINTH_EMAIL, Config.NINTH_PASSWORD)
+        
+        # Если есть метод login, вызываем его
+        if hasattr(auth, 'login'):
+            if not auth.login():
+                logger.error("❌ Ошибка авторизации")
+                return
+        else:
+            # Если нет метода login, считаем что авторизация прошла при создании
+            pass
+            
         logger.info("✅ Авторизация успешна")
     except Exception as e:
         logger.error(f"❌ Ошибка при авторизации: {e}")
@@ -72,6 +76,11 @@ def main():
 
     # 4. Публикация
     try:
+        # Получаем session из объекта auth
+        if not hasattr(auth, 'session'):
+            logger.error("❌ У объекта авторизации нет session")
+            return
+            
         pub_api = PublicationAPI(
             session=auth.session,
             user_hash=Config.USER_HASH,
@@ -82,7 +91,6 @@ def main():
         for i, post in enumerate(posts, 1):
             logger.info(f"--- Пост {i}/{len(posts)} ---")
             
-            # Получаем данные поста
             title = post.get("title", "")[:100]
             content = post.get("content", "")
             
