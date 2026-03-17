@@ -42,7 +42,7 @@ def main():
     
     if browser.login():
         logger.info("="*50)
-        logger.info("✅ ТЕСТ ПРОЙДЕН")
+        logger.info("✅ ТЕСТ ПРОЙДЕН - АВТОРИЗАЦИЯ РАБОТАЕТ!")
         logger.info("="*50)
     else:
         logger.error("="*50)
