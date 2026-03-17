@@ -40,6 +40,16 @@ def safe_get_attr(obj, attr_name, default=None):
     return default
 
 
+def safe_call_method(obj, method_name, *args, **kwargs):
+    """Безопасно вызывает метод объекта"""
+    if hasattr(obj, method_name) and callable(getattr(obj, method_name)):
+        try:
+            return getattr(obj, method_name)(*args, **kwargs)
+        except Exception as e:
+            logger.warning(f"Ошибка при вызове {method_name}: {e}")
+    return None
+
+
 def get_session_from_driver(driver):
     """Создает сессию из Selenium driver"""
     import requests
@@ -226,11 +236,22 @@ def main():
                 return
             logger.info("✅ Login выполнен успешно")
         
-        # Получаем driver из объекта auth
-        driver = safe_get_attr(auth, 'driver')
+        # Пробуем разные способы получить driver
+        driver = None
         
-        if driver is None:
-            logger.error("❌ Driver не найден в объекте auth")
+        # Способ 1: прямой атрибут driver
+        driver = safe_get_attr(auth, 'driver')
+        if driver:
+            logger.info("✅ Найден driver через атрибут")
+        
+        # Способ 2: вызов метода get_driver()
+        if not driver:
+            driver = safe_call_method(auth, 'get_driver')
+            if driver:
+                logger.info("✅ Получен driver через get_driver()")
+        
+        if not driver:
+            logger.error("❌ Не удалось получить driver")
             # Выводим доступные атрибуты для отладки
             logger.info("Доступные атрибуты auth:")
             for attr in dir(auth):
@@ -238,14 +259,14 @@ def main():
                     logger.info(f"  - {attr}")
             return
         
-        logger.info(f"🚗 Driver найден: {driver}")
+        logger.info(f"🚗 Driver получен: {driver}")
         
         # Проверяем текущий URL
         try:
             current_url = driver.current_url
             logger.info(f"🌐 Текущий URL driver: {current_url}")
-        except:
-            logger.warning("⚠️ Не удалось получить текущий URL")
+        except Exception as e:
+            logger.warning(f"⚠️ Не удалось получить текущий URL: {e}")
         
         # Создаем сессию из driver
         session = get_session_from_driver(driver)
