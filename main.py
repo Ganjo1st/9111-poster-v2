@@ -1,6 +1,7 @@
 import os
 import sys
 import pickle
+import json
 from pathlib import Path
 
 # Добавляем путь к проекту
@@ -122,7 +123,7 @@ def create_session_from_auth(auth):
 
 
 def get_telegram_posts():
-    """Получает посты из Telegram используя правильные методы"""
+    """Получает посты из Telegram и преобразует в нужный формат"""
     logger.info("🤖 Попытка получить посты из Telegram...")
     
     if not hasattr(tg_module, 'TelegramBotParser'):
@@ -141,25 +142,95 @@ def get_telegram_posts():
         if hasattr(parser, 'parse_channel_posts'):
             logger.info("Вызываем parser.parse_channel_posts()")
             try:
-                posts = parser.parse_channel_posts()
-                if posts:
-                    logger.info(f"✅ Получено {len(posts)} постов через parse_channel_posts()")
-                    # Выводим информацию о первом посте
-                    if len(posts) > 0:
+                raw_posts = parser.parse_channel_posts()
+                
+                # Выводим информацию о сырых данных для отладки
+                logger.info(f"📦 Тип полученных данных: {type(raw_posts)}")
+                
+                if raw_posts:
+                    logger.info(f"📦 Количество: {len(raw_posts)}")
+                    
+                    # Показываем первый пост в сыром виде
+                    if len(raw_posts) > 0:
+                        first_raw = raw_posts[0]
+                        logger.info(f"📄 Сырой первый пост (тип: {type(first_raw)}):")
+                        
+                        # Если это словарь, показываем ключи
+                        if isinstance(first_raw, dict):
+                            logger.info(f"   Ключи: {list(first_raw.keys())}")
+                            # Пробуем найти текст
+                            for key in ['text', 'message', 'content', 'caption', 'title']:
+                                if key in first_raw and first_raw[key]:
+                                    logger.info(f"   {key}: {first_raw[key][:100]}...")
+                        else:
+                            # Если это не словарь, показываем само значение
+                            logger.info(f"   Значение: {str(first_raw)[:200]}")
+                    
+                    # Преобразуем в единый формат
+                    posts = []
+                    for raw_post in raw_posts:
+                        post = {}
+                        
+                        # Пробуем разные варианты полей
+                        if isinstance(raw_post, dict):
+                            # Пробуем найти заголовок
+                            for title_key in ['title', 'header', 'subject', 'caption']:
+                                if title_key in raw_post and raw_post[title_key]:
+                                    post['title'] = str(raw_post[title_key])
+                                    break
+                            
+                            # Пробуем найти контент
+                            for content_key in ['text', 'content', 'message', 'body', 'caption']:
+                                if content_key in raw_post and raw_post[content_key]:
+                                    post['content'] = str(raw_post[content_key])
+                                    break
+                            
+                            # Если нашли caption но не нашли контент, используем caption как контент
+                            if 'caption' in raw_post and 'content' not in post:
+                                post['content'] = str(raw_post['caption'])
+                            
+                            # Копируем остальные поля
+                            for key, value in raw_post.items():
+                                if key not in ['title', 'content']:
+                                    post[key] = value
+                        else:
+                            # Если это не словарь, используем как контент
+                            post['content'] = str(raw_post)
+                            post['title'] = str(raw_post)[:100]
+                        
+                        # Если нет заголовка, берем первые 100 символов контента
+                        if not post.get('title') and post.get('content'):
+                            post['title'] = post['content'][:100]
+                        
+                        # Если нет контента, пропускаем
+                        if post.get('content'):
+                            posts.append(post)
+                    
+                    logger.info(f"✅ Преобразовано {len(posts)} постов")
+                    
+                    # Показываем первый преобразованный пост
+                    if posts and len(posts) > 0:
                         first_post = posts[0]
-                        title = first_post.get('title', '')[:50]
-                        logger.info(f"📄 Первый пост: {title}...")
+                        logger.info(f"📄 Преобразованный первый пост:")
+                        logger.info(f"   Заголовок: {first_post.get('title', '')[:100]}")
+                        logger.info(f"   Контент: {first_post.get('content', '')[:100]}...")
+                    
                     return posts
                 else:
                     logger.warning("parse_channel_posts() вернул пустой список")
+                    return []
+                    
             except Exception as e:
                 logger.warning(f"Ошибка в parse_channel_posts(): {e}")
+                import traceback
+                logger.warning(traceback.format_exc())
+                return []
+        
+        return []
         
     except Exception as e:
         logger.error(f"❌ Ошибка при создании парсера: {e}")
-    
-    logger.warning("❌ Не удалось получить посты")
-    return []
+        return []
 
 
 def main():
@@ -224,34 +295,40 @@ def main():
         return
 
     logger.info(f"✅ Получено {len(posts)} постов")
-    
-    # Выводим информацию о первом посте для отладки
-    if posts and len(posts) > 0:
-        first_post = posts[0]
-        logger.info(f"📄 Пример поста:")
-        logger.info(f"  Заголовок: {first_post.get('title', '')[:100]}")
-        logger.info(f"  Контент: {first_post.get('content', '')[:100]}...")
 
     # 4. Публикация
     try:
         pub_api = PublicationAPI(
             session=session,
-            user_hash=Config.USER_HASH,  # Всегда используем из Config
-            uuk=Config.UUK                # Всегда используем из Config
+            user_hash=Config.USER_HASH,
+            uuk=Config.UUK
         )
 
         successful = 0
         for i, post in enumerate(posts, 1):
             logger.info(f"--- 📝 Пост {i}/{len(posts)} ---")
             
-            title = post.get("title", "")[:100]
-            content = post.get("content", "")
+            title = post.get("title", "").strip()
+            content = post.get("content", "").strip()
+            
+            # Если нет контента, пробуем взять из других полей
+            if not content:
+                for field in ['text', 'message', 'body']:
+                    if field in post and post[field]:
+                        content = str(post[field]).strip()
+                        break
+            
+            # Если нет заголовка, берем из контента
+            if not title and content:
+                title = content[:100]
             
             if not title or not content:
                 logger.warning(f"⚠️ Пост {i} пропущен: нет заголовка или контента")
+                logger.warning(f"   Доступные поля: {list(post.keys())}")
                 continue
                 
             logger.info(f"Заголовок: {title}")
+            logger.info(f"Контент: {content[:100]}...")
             
             success = pub_api.create_publication(
                 title=title,
