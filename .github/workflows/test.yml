@@ -15,7 +15,7 @@ jobs:
         with:
           python-version: '3.10'
       
-      - name: Install system dependencies
+      - name: Install ALL system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -23,8 +23,14 @@ jobs:
             git \
             make \
             gcc \
-            netfilter-persistent \
-            iptables-persistent
+            libnetfilter-queue-dev \
+            libnfnetlink-dev \
+            libmnl-dev \
+            autoconf \
+            libtool \
+            pkg-config \
+            libcap-dev \
+            libssl-dev
       
       - name: Setup zapret (DPI bypass)
         run: |
@@ -35,7 +41,7 @@ jobs:
         run: |
           sudo /usr/local/bin/tpws --port=989 --bind-addr=127.0.0.1 --daemon
           echo "✅ zapret запущен в фоне"
-          sleep 2
+          sleep 3
       
       - name: Install Python dependencies
         run: |
