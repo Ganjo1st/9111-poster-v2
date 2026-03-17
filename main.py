@@ -10,7 +10,7 @@ import modules.github_actions_auth as auth_module
 from modules.config import Config
 from modules.logger import setup_logging
 from modules.publication_api import PublicationAPI
-from modules.telegram_bot_parser import TelegramBotParser
+from modules import telegram_bot_parser  # Импортируем модуль целиком
 from modules.rubric_mapper import get_rubric_id
 
 # Настройка логирования
@@ -28,6 +28,89 @@ def get_auth_class():
     
     logger.error("Не найден класс авторизации")
     return None
+
+
+def get_telegram_parser():
+    """Создает парсер Telegram в зависимости от сигнатуры"""
+    try:
+        # Пробуем разные варианты инициализации
+        if hasattr(telegram_bot_parser, 'TelegramBotParser'):
+            ParserClass = telegram_bot_parser.TelegramBotParser
+            
+            # Пробуем создать с токеном
+            try:
+                parser = ParserClass(Config.TELEGRAM_TOKEN)
+                logger.info("Создан парсер Telegram с токеном")
+                return parser
+            except TypeError:
+                pass
+            
+            # Пробуем создать с токеном и channel_id
+            try:
+                parser = ParserClass(Config.TELEGRAM_TOKEN, Config.CHANNEL_ID)
+                logger.info("Создан парсер Telegram с токеном и channel_id")
+                return parser
+            except TypeError:
+                pass
+            
+            # Пробуем создать без аргументов
+            try:
+                parser = ParserClass()
+                logger.info("Создан парсер Telegram без аргументов")
+                return parser
+            except TypeError:
+                pass
+        
+        logger.error("Не удалось создать парсер Telegram")
+        return None
+        
+    except Exception as e:
+        logger.error(f"Ошибка при создании парсера: {e}")
+        return None
+
+
+def get_telegram_posts(parser):
+    """Получает посты в зависимости от сигнатуры метода"""
+    try:
+        # Пробуем разные варианты вызова
+        if hasattr(parser, 'get_posts'):
+            # Пробуем с channel_id и limit
+            try:
+                posts = parser.get_posts(Config.CHANNEL_ID, limit=Config.POSTS_LIMIT)
+                logger.info("Получены посты через get_posts(channel_id, limit)")
+                return posts
+            except TypeError:
+                pass
+            
+            # Пробуем только с channel_id
+            try:
+                posts = parser.get_posts(Config.CHANNEL_ID)
+                logger.info("Получены посты через get_posts(channel_id)")
+                return posts
+            except TypeError:
+                pass
+            
+            # Пробуем без аргументов
+            try:
+                posts = parser.get_posts()
+                logger.info("Получены посты через get_posts()")
+                return posts
+            except TypeError:
+                pass
+        
+        # Если есть другой метод
+        if hasattr(parser, 'parse'):
+            try:
+                posts = parser.parse(Config.CHANNEL_ID, limit=Config.POSTS_LIMIT)
+                logger.info("Получены посты через parse()")
+                return posts
+            except:
+                pass
+                
+    except Exception as e:
+        logger.error(f"Ошибка при получении постов: {e}")
+    
+    return []
 
 
 def main():
@@ -56,27 +139,23 @@ def main():
         return
 
     # 3. Парсинг Telegram
-    try:
-        # Создаем парсер с токеном
-        parser = TelegramBotParser(Config.TELEGRAM_TOKEN)
-        
-        # Получаем посты, передавая channel_id
-        posts = parser.get_posts(Config.CHANNEL_ID, limit=Config.POSTS_LIMIT)
-
-        if not posts:
-            logger.warning("❌ Нет постов для публикации")
-            return
-
-        logger.info(f"✅ Получено {len(posts)} постов")
-        
-        # Выводим информацию о первом посте для отладки
-        if posts and len(posts) > 0:
-            first_post = posts[0]
-            logger.info(f"Пример поста - Заголовок: {first_post.get('title', '')[:50]}...")
-            
-    except Exception as e:
-        logger.error(f"❌ Ошибка при парсинге Telegram: {e}")
+    parser = get_telegram_parser()
+    if not parser:
+        logger.error("❌ Не удалось создать парсер Telegram")
         return
+        
+    posts = get_telegram_posts(parser)
+
+    if not posts:
+        logger.warning("❌ Нет постов для публикации")
+        return
+
+    logger.info(f"✅ Получено {len(posts)} постов")
+    
+    # Выводим информацию о первом посте для отладки
+    if posts and len(posts) > 0:
+        first_post = posts[0]
+        logger.info(f"Пример поста - Заголовок: {first_post.get('title', '')[:50]}...")
 
     # 4. Публикация
     try:
