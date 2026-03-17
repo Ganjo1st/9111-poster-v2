@@ -1,4 +1,4 @@
-name: Test Auth with zapret (nfqws mode)
+name: Test Auth with zapret
 
 on:
   workflow_dispatch:
@@ -28,16 +28,16 @@ jobs:
       
       - name: Run nfqws (kernel-level DPI bypass)
         run: |
-          # Запускаем nfqws для обхода DPI
-          sudo /usr/local/bin/nfqws --daemon --qnum=989 --dpi-desync=split --dpi-desync-split-seq
+          # Запускаем nfqws с правильными параметрами для v70
+          sudo /usr/local/bin/nfqws --daemon --qnum=989 --dpi-desync=fake,split --dpi-desync-fake-tls=/dev/null --dpi-desync-split-pos=2
           echo "✅ nfqws запущен"
           sleep 3
           ps aux | grep nfqws
       
-      - name: Test connection (direct)
+      - name: Test connection
         run: |
           echo "Проверяем доступ к 9111.ru..."
-          curl -I https://9111.ru --connect-timeout 10 || echo "❌ Сайт недоступен"
+          curl -I https://9111.ru --connect-timeout 10 || echo "❌ Сайт недоступен напрямую"
       
       - name: Install Python dependencies
         run: |
