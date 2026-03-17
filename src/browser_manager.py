@@ -62,12 +62,10 @@ class BrowserManager:
             time.sleep(3)
             self.save_screenshot("1_main_page.png")
             
-            # Проверяем не заблокирован ли доступ
             if "403" in self.driver.title or "Forbidden" in self.driver.page_source:
                 logger.error("❌ Доступ заблокирован (403 Forbidden)")
                 return False
             
-            # Пробуем перейти на страницу логина
             self.driver.get("https://9111.ru/login/")
             time.sleep(3)
             self.save_screenshot("2_login_page.png")
@@ -76,7 +74,6 @@ class BrowserManager:
                 logger.error("❌ Страница логина заблокирована")
                 return False
             
-            # Ищем поля ввода
             email_input = self.wait.until(EC.presence_of_element_located((By.NAME, "email")))
             email_input.send_keys(self.email)
             
