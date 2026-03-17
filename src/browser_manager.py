@@ -39,59 +39,105 @@ class BrowserManager:
         self.driver.save_screenshot(name)
         logger.info(f"📸 Скриншот: {name}")
     
-    def set_cookies(self):
-        """Устанавливает куки для авторизации."""
-        logger.info("🍪 Устанавливаем куки авторизации...")
-        # Сначала нужно открыть домен, чтобы можно было установить куки
-        self.driver.get("https://9111.ru")
-        time.sleep(2)
+    def set_all_cookies(self):
+        """Устанавливает ВСЕ куки из предоставленного файла."""
+        logger.info("🍪 Устанавливаем ВСЕ куки авторизации...")
         
-        # Куки из вашего файла
-        cookies = [
-            {'name': 'user_hash', 'value': self.user_hash, 'domain': '.9111.ru'},
-            {'name': 'uuk', 'value': self.uuk, 'domain': '.9111.ru'},
-            # Можно добавить и другие куки, если нужно, но эти две — ключевые.
-            # {'name': 'au', 'value': '{"u":2368040,"k":"aa8ca3729252da5450cdb0862352503d","t":1773721763}', 'domain': '.9111.ru'},
-            # {'name': 'csrf_token', 'value': '{"token":"da7c5e304ead459418b7bcc8ac882ae70822a6660d9ee396240acf2581e129c3","ip":"5.44.168.228"}', 'domain': '.9111.ru'},
+        # Сначала открываем домен, чтобы можно было установить куки
+        self.driver.get("https://9111.ru")
+        time.sleep(3)
+        
+        # ВСЕ куки из вашего файла
+        all_cookies = [
+            {'name': 'user_hash', 'value': self.user_hash, 'domain': '.9111.ru', 'path': '/', 'secure': True},
+            {'name': 'uuk', 'value': self.uuk, 'domain': '.9111.ru', 'path': '/', 'secure': True},
+            {'name': 'geo', 'value': '91-817-1', 'domain': '.9111.ru', 'path': '/', 'secure': True},
+            {'name': 'tmp_url_redirect', 'value': 'https%3A%2F%2F9111.ru%2F', 'domain': '.9111.ru', 'path': '/', 'secure': True},
+            {'name': 'csrf_token', 'value': '{"token":"da7c5e304ead459418b7bcc8ac882ae70822a6660d9ee396240acf2581e129c3","ip":"5.44.168.228"}', 'domain': '.9111.ru', 'path': '/', 'secure': True},
+            {'name': 'au', 'value': '{"u":2368040,"k":"aa8ca3729252da5450cdb0862352503d","t":1773721763}', 'domain': '.9111.ru', 'path': '/', 'secure': True}
         ]
         
-        for cookie in cookies:
+        for cookie in all_cookies:
             try:
                 self.driver.add_cookie(cookie)
-                logger.info(f"   Установлена кука: {cookie['name']}")
+                logger.info(f"   ✅ Установлена кука: {cookie['name']}")
             except Exception as e:
-                logger.warning(f"   Не удалось установить куку {cookie['name']}: {e}")
+                logger.warning(f"   ⚠️ Не удалось установить куку {cookie['name']}: {e}")
         
-        logger.info("✅ Куки установлены")
-        # После установки кук перезагрузим страницу
+        logger.info("✅ Все куки установлены")
+        
+        # Обновляем страницу
         self.driver.refresh()
-        time.sleep(3)
+        time.sleep(5)
     
-    def check_authorization(self):
+    def check_authorization_deep(self):
+        """Глубокая проверка авторизации по нескольким признакам"""
         try:
             page_source = self.driver.page_source
+            
+            # 1. Проверяем наличие ID пользователя
             if self.user_id in page_source:
                 logger.info(f"✅ Найден ID пользователя {self.user_id}")
                 return True
+            
+            # 2. Проверяем наличие индикаторов авторизации
+            auth_indicators = [
+                'Выход',
+                'Мои публикации',
+                'Баланс',
+                'Профиль',
+                'userMenuOpen',
+                'notification-bell'
+            ]
+            
+            for indicator in auth_indicators:
+                if indicator in page_source:
+                    logger.info(f"✅ Найден индикатор авторизации: '{indicator}'")
+                    return True
+            
+            # 3. Проверяем куки в браузере (те, что установились)
+            cookies = self.driver.get_cookies()
+            cookie_names = [c['name'] for c in cookies]
+            logger.info(f"📊 Куки в браузере после установки: {cookie_names}")
+            
+            # Проверяем наличие ключевых кук
+            if 'user_hash' in cookie_names and 'uuk' in cookie_names:
+                logger.info("✅ Ключевые куки присутствуют в браузере")
+                # Если куки есть, но ID не найден, возможно, страница не та
+                return True
+            
             return False
-        except:
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка проверки авторизации: {e}")
             return False
     
     def login(self):
-        """'Вход' через установку кук."""
+        """'Вход' через установку всех кук."""
         try:
             logger.info("🔑 Начинаем процесс 'входа' через куки...")
             
-            # Переходим на главную и устанавливаем куки
-            self.set_cookies()
-            self.save_screenshot("1_after_cookies.png")
+            # Устанавливаем ВСЕ куки
+            self.set_all_cookies()
+            self.save_screenshot("1_after_all_cookies.png")
             
-            # Проверяем, авторизованы ли мы
-            if self.check_authorization():
+            # Проверяем авторизацию
+            if self.check_authorization_deep():
                 logger.info("🎉 УСПЕХ! Авторизация по кукам сработала.")
+                
+                # Дополнительно проверяем, что мы действительно на сайте
+                current_url = self.driver.current_url
+                logger.info(f"📍 Текущий URL: {current_url}")
+                
                 return True
             else:
                 logger.error("❌ Не удалось подтвердить авторизацию по кукам.")
+                
+                # Сохраняем HTML для анализа
+                with open("page_source.html", "w", encoding="utf-8") as f:
+                    f.write(self.driver.page_source)
+                logger.info("💾 Сохранен HTML страницы для анализа")
+                
                 return False
                 
         except Exception as e:
