@@ -2,9 +2,10 @@ name: 9111 Poster
 
 on:
   schedule:
+    # Запуск каждый день в 10:00 и 18:00 по Москве (UTC+3)
     - cron: '0 7 * * *'   # 10:00 МСК
     - cron: '0 15 * * *'  # 18:00 МСК
-  workflow_dispatch:
+  workflow_dispatch:  # Возможность ручного запуска
 
 jobs:
   post-to-9111:
@@ -31,12 +32,27 @@ jobs:
         
     - name: Get fresh Russian proxies
       run: |
-        # Скачиваем список российских прокси
-        curl -o russian_proxies.txt https://raw.githubusercontent.com/ClearProxy/checked-proxy-list/main/http/raw/country/RU.txt
-        # Берем первый рабочий прокси из списка
-        export PROXY=$(head -1 russian_proxies.txt)
-        echo "Используем прокси: $PROXY"
-        echo "PROXY=$PROXY" >> $GITHUB_ENV
+        echo "📥 Скачиваем список российских прокси..."
+        # Скачиваем список HTTP прокси из России
+        curl -s -o russian_proxies.txt https://raw.githubusercontent.com/ClearProxy/checked-proxy-list/main/http/raw/country/RU.txt
+        
+        # Показываем первые 5 прокси для отладки
+        echo "🔄 Первые 5 прокси из списка:"
+        head -5 russian_proxies.txt | while read proxy; do
+          echo "   $proxy"
+        done
+        
+        # Берём случайный прокси из списка
+        TOTAL=$(wc -l < russian_proxies.txt)
+        if [ $TOTAL -gt 0 ]; then
+          RANDOM_LINE=$((1 + RANDOM % $TOTAL))
+          PROXY=$(sed -n "${RANDOM_LINE}p" russian_proxies.txt)
+          echo "✅ Выбран прокси: $PROXY"
+          echo "PROXY=$PROXY" >> $GITHUB_ENV
+        else
+          echo "❌ Не удалось получить список прокси"
+          exit 1
+        fi
         
     - name: Create logs directory
       run: mkdir -p logs
