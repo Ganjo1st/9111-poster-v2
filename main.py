@@ -110,8 +110,36 @@ def main():
             if not auth.login():
                 logger.error("❌ Ошибка авторизации")
                 return
-                
-        logger.info("✅ Авторизация успешна")
+        
+        # Проверяем наличие session разными способами
+        session = None
+        
+        # Способ 1: прямой атрибут session
+        if hasattr(auth, 'session'):
+            session = auth.session
+            logger.info("✅ Найден auth.session")
+        
+        # Способ 2: атрибут _session
+        elif hasattr(auth, '_session'):
+            session = auth._session
+            logger.info("✅ Найден auth._session")
+        
+        # Способ 3: метод get_session()
+        elif hasattr(auth, 'get_session') and callable(auth.get_session):
+            session = auth.get_session()
+            logger.info("✅ Получена сессия через get_session()")
+        
+        if session is None:
+            logger.error("❌ Не удалось получить session из объекта авторизации")
+            # Выводим все атрибуты объекта для отладки
+            logger.info("Доступные атрибуты объекта auth:")
+            for attr in dir(auth):
+                if not attr.startswith('_'):
+                    logger.info(f"  - {attr}")
+            return
+            
+        logger.info("✅ Авторизация успешна, сессия получена")
+        
     except Exception as e:
         logger.error(f"❌ Ошибка при авторизации: {e}")
         return
@@ -134,12 +162,8 @@ def main():
 
     # 4. Публикация
     try:
-        if not hasattr(auth, 'session'):
-            logger.error("❌ У объекта авторизации нет session")
-            return
-            
         pub_api = PublicationAPI(
-            session=auth.session,
+            session=session,
             user_hash=Config.USER_HASH,
             uuk=Config.UUK
         )
