@@ -1,0 +1,27 @@
+# Secrets
+.env
+.env.local
+
+# Sessions
+sessions/
+*.pkl
+*.session
+
+# Temp files
+temp_media/
+*.tmp
+*.temp
+
+# Logs
+logs/
+*.log
+
+# Cache
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# IDE
+.vscode/
+.idea/
+*.swp
