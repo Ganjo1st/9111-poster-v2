@@ -1,5 +1,7 @@
 import logging
 import time
+import gzip
+import zlib
 from typing import Optional
 
 import requests
@@ -8,6 +10,28 @@ from bs4 import BeautifulSoup
 from modules.rubric_mapper import get_rubric_id
 
 logger = logging.getLogger(__name__)
+
+
+def decompress_response(response):
+    """Пытается декомпрессировать ответ, если он сжат"""
+    content_encoding = response.headers.get('Content-Encoding', '')
+    
+    if 'gzip' in content_encoding:
+        try:
+            return gzip.decompress(response.content).decode('utf-8')
+        except:
+            pass
+    elif 'deflate' in content_encoding:
+        try:
+            return zlib.decompress(response.content).decode('utf-8')
+        except:
+            pass
+    
+    # Если не получилось декомпрессировать, пробуем как есть
+    try:
+        return response.text
+    except:
+        return str(response.content)
 
 
 class PublicationAPI:
@@ -31,7 +55,7 @@ class PublicationAPI:
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
             'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
-            'Accept-Encoding': 'gzip, deflate, br',
+            'Accept-Encoding': 'gzip, deflate, br',  # Разрешаем сжатие
             'Connection': 'keep-alive',
             'Upgrade-Insecure-Requests': '1',
             'Sec-Fetch-Dest': 'document',
@@ -74,6 +98,11 @@ class PublicationAPI:
         try:
             main_response = self.session.get('https://9111.ru', timeout=30, allow_redirects=True)
             logger.info(f"Главная страница вернула статус: {main_response.status_code}")
+            logger.info(f"Заголовки ответа: {dict(main_response.headers)}")
+            
+            # Пробуем декомпрессировать ответ
+            main_text = decompress_response(main_response)
+            logger.info(f"Длина декомпрессированного ответа: {len(main_text)}")
             
             # Проверяем куки после загрузки главной
             cookies_dict = self.session.cookies.get_dict()
@@ -90,18 +119,24 @@ class PublicationAPI:
             get_response = self.session.get(self.ADD_TITLE_URL, timeout=30, allow_redirects=True)
             logger.info(f"Статус загрузки страницы: {get_response.status_code}")
             logger.info(f"URL после загрузки: {get_response.url}")
+            logger.info(f"Заголовки ответа: {dict(get_response.headers)}")
             
             if get_response.status_code != 200:
                 logger.error(f"❌ Не удалось загрузить страницу: {get_response.status_code}")
-                # Сохраняем часть ответа для отладки
-                logger.error(f"Первые 500 символов ответа: {get_response.text[:500]}")
+                # Пробуем декомпрессировать ответ для отладки
+                response_text = decompress_response(get_response)
+                logger.error(f"Первые 500 символов ответа: {response_text[:500]}")
                 return False
+                
+            # Декомпрессируем ответ для парсинга
+            response_text = decompress_response(get_response)
+            
         except Exception as e:
             logger.error(f"❌ Ошибка при загрузке страницы: {e}")
             return False
 
         # 4. Извлекаем скрытые поля формы
-        soup = BeautifulSoup(get_response.text, "html.parser")
+        soup = BeautifulSoup(response_text, "html.parser")
         form = soup.find("form", {"id": "form_create_topic_group"})
         
         form_data = {}
@@ -124,6 +159,8 @@ class PublicationAPI:
             logger.info(f"✅ Найдено полей в форме: {len(form_data)}")
         else:
             logger.warning("⚠️ Форма не найдена, продолжаем без скрытых полей")
+            # Сохраняем часть HTML для отладки
+            logger.error(f"Первые 1000 символов HTML: {response_text[:1000]}")
 
         # 5. Добавляем обязательные поля
         form_data.update({
@@ -159,10 +196,14 @@ class PublicationAPI:
 
             logger.info(f"🌐 Статус ответа: {response.status_code}")
             logger.info(f"📍 URL после запроса: {response.url}")
+            logger.info(f"Заголовки ответа: {dict(response.headers)}")
+
+            # Декомпрессируем ответ для проверки
+            response_text = decompress_response(response)
 
             if response.status_code == 200:
                 # Проверяем разные признаки успеха
-                response_text = response.text.lower()
+                response_text_lower = response_text.lower()
                 
                 success_indicators = [
                     "спасибо",
@@ -174,12 +215,12 @@ class PublicationAPI:
                 ]
                 
                 for indicator in success_indicators:
-                    if indicator in response_text:
+                    if indicator in response_text_lower:
                         logger.info(f"✅ Найден индикатор успеха: '{indicator}'")
                         return True
                 
                 # Проверяем наличие ошибок
-                soup = BeautifulSoup(response.text, "html.parser")
+                soup = BeautifulSoup(response_text, "html.parser")
                 error_div = soup.find(id="title_status_save")
                 if error_div and error_div.text:
                     error_msg = error_div.text.strip()
