@@ -1,8 +1,8 @@
 import os
 import logging
+import asyncio
 from telethon import TelegramClient
 from telethon.errors import SessionPasswordNeededError
-import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -16,14 +16,23 @@ class TelegramParser:
         self.channel = os.getenv('CHANNEL_ID', '@Novikon_news')
         self.client = None
         
+        logger.info(f"📱 TelegramParser инициализирован для канала {self.channel}")
+        
     async def async_get_posts(self, limit=10):
         """Асинхронное получение постов"""
-        if not self.client:
-            self.client = TelegramClient('session_name', self.api_id, self.api_hash)
-            await self.client.start(bot_token=self.token)
+        logger.info(f"📡 Получение {limit} последних постов из {self.channel}...")
+        
+        if not self.token:
+            logger.error("❌ TELEGRAM_TOKEN не задан")
+            return []
             
+        self.client = TelegramClient('session_name', self.api_id, self.api_hash)
+        
         posts = []
         try:
+            await self.client.start(bot_token=self.token)
+            logger.info("✅ Подключение к Telegram установлено")
+            
             async for message in self.client.iter_messages(self.channel, limit=limit):
                 if message.text:
                     posts.append({
@@ -32,8 +41,12 @@ class TelegramParser:
                         'text': message.text,
                         'has_media': bool(message.media)
                     })
+                    logger.debug(f"Найден пост {message.id}: {message.text[:50]}...")
+            
+            logger.info(f"✅ Получено {len(posts)} постов")
+            
         except Exception as e:
-            logger.error(f"Ошибка при получении постов: {e}")
+            logger.error(f"❌ Ошибка при получении постов: {e}")
         finally:
             await self.client.disconnect()
             
@@ -45,5 +58,8 @@ class TelegramParser:
         asyncio.set_event_loop(loop)
         try:
             return loop.run_until_complete(self.async_get_posts(limit))
+        except Exception as e:
+            logger.error(f"❌ Ошибка в get_channel_posts: {e}")
+            return []
         finally:
             loop.close()
