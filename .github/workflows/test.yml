@@ -47,10 +47,9 @@ jobs:
       
       - name: Run test
         env:
-          NINTH_EMAIL: ${{ secrets.NINTH_EMAIL }}
-          NINTH_PASSWORD: ${{ secrets.NINTH_PASSWORD }}
-        run: |
-          python src/poster.py
+          USER_HASH: ${{ secrets.USER_HASH }}
+          UUK: ${{ secrets.UUK }}
+        run: python src/poster.py
       
       - name: Upload screenshots
         if: always()
