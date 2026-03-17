@@ -1,0 +1,72 @@
+name: 9111 Poster
+
+on:
+  schedule:
+    # Запуск каждый час
+    - cron: '0 * * * *'
+  workflow_dispatch:  # Возможность ручного запуска
+  push:
+    branches: [ main ]
+
+jobs:
+  post-to-9111:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+        cache: 'pip'
+    
+    - name: Install dependencies
+      run: |
+        pip install -r requirements.txt
+        # Установка Chrome для Selenium
+        sudo apt-get update
+        sudo apt-get install -y chromium-browser chromium-chromedriver
+        # Установка Xvfb для виртуального дисплея
+        sudo apt-get install -y xvfb
+        
+    - name: Create temp directories
+      run: |
+        mkdir -p temp_media
+        mkdir -p logs
+        mkdir -p sessions
+        
+    - name: Run poster
+      env:
+        # 9111 credentials
+        NINTH_EMAIL: ${{ secrets.NINTH_EMAIL }}
+        NINTH_PASSWORD: ${{ secrets.NINTH_PASSWORD }}
+        USER_HASH: ${{ secrets.USER_HASH }}
+        UUK: ${{ secrets.UUK }}
+        
+        # Telegram
+        TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+        CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
+        
+        # Settings
+        PUBLICATION_RUBRIC_ID: "382235"  # Новости
+        PUBLICATION_TAGS: "новости, закон, право, россия"
+        MAX_POSTS_PER_RUN: "3"
+        
+      run: |
+        xvfb-run -a python main_github.py
+        
+    - name: Upload logs
+      if: always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: logs
+        path: logs/
+        
+    - name: Upload screenshots on failure
+      if: failure()
+      uses: actions/upload-artifact@v3
+      with:
+        name: error-screenshots
+        path: logs/error_*.png
