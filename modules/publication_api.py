@@ -433,4 +433,18 @@ class PublicationAPI:
                     return True
                     
                 else:
-                    logger.error(f"❌ HTTP ошибка: {response.status
+                    logger.error(f"❌ HTTP ошибка: {response.status_code}")
+                    
+            except requests.exceptions.Timeout:
+                logger.error("❌ Таймаут при отправке запроса")
+                if attempt <= max_retries:
+                    logger.info("Повторная попытка...")
+                    self._random_delay(5, 10)
+                    continue
+                    
+            except Exception as e:
+                logger.exception(f"❌ Исключение при отправке: {e}")
+                return False
+        
+        logger.error(f"❌ Не удалось создать публикацию после {max_retries + 1} попыток")
+        return False
