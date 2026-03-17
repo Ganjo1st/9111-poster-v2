@@ -1,4 +1,4 @@
-name: Test Auth with DPI Bypass
+name: Test Auth with NoDPI
 
 on:
   workflow_dispatch:
@@ -15,33 +15,29 @@ jobs:
         with:
           python-version: '3.10'
       
-      - name: Install ALL system dependencies
+      - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             google-chrome-stable \
             git \
-            make \
-            gcc \
-            libnetfilter-queue-dev \
-            libnfnetlink-dev \
-            libmnl-dev \
-            autoconf \
-            libtool \
-            pkg-config \
-            libcap-dev \
-            libssl-dev
+            python3 \
+            python3-pip
       
-      - name: Setup zapret (DPI bypass)
+      - name: Setup NoDPI
         run: |
-          chmod +x ./setup_zapret.sh
-          sudo ./setup_zapret.sh
+          chmod +x ./setup_nodpi.sh
+          ./setup_nodpi.sh
       
-      - name: Run zapret in background
+      - name: Run NoDPI in background
         run: |
-          sudo /usr/local/bin/tpws --port=989 --bind-addr=127.0.0.1 --daemon
-          echo "✅ zapret запущен в фоне"
+          cd /tmp/NoDPI
+          # Запускаем NoDPI с черным списком
+          python3 nodpi.py --blacklist ${{ github.workspace }}/blacklist.txt &
+          echo "✅ NoDPI запущен в фоне"
           sleep 3
+          # Проверяем что процесс запущен
+          ps aux | grep nodpi
       
       - name: Install Python dependencies
         run: |
@@ -50,11 +46,29 @@ jobs:
       - name: Create screenshots dir
         run: mkdir -p screenshots
       
+      - name: Configure system to use NoDPI proxy
+        run: |
+          # Настраиваем системный прокси для HTTP/HTTPS
+          echo "export http_proxy=http://127.0.0.1:8881" >> ~/.bashrc
+          echo "export https_proxy=http://127.0.0.1:8881" >> ~/.bashrc
+          source ~/.bashrc
+          
+          # Альтернативно, настраиваем через environment для текущего шага
+          echo "http_proxy=http://127.0.0.1:8881" >> $GITHUB_ENV
+          echo "https_proxy=http://127.0.0.1:8881" >> $GITHUB_ENV
+          echo "✅ Прокси настроен"
+      
       - name: Run test
         env:
           NINTH_EMAIL: ${{ secrets.NINTH_EMAIL }}
           NINTH_PASSWORD: ${{ secrets.NINTH_PASSWORD }}
-        run: python src/poster.py
+          http_proxy: http://127.0.0.1:8881
+          https_proxy: http://127.0.0.1:8881
+        run: |
+          # Проверяем что прокси работает
+          curl -I https://9111.ru --proxy http://127.0.0.1:8881 || true
+          # Запускаем тест
+          python src/poster.py
       
       - name: Upload screenshots
         if: always()
@@ -63,6 +77,7 @@ jobs:
           name: screenshots
           path: "*.png"
       
-      - name: Stop zapret (cleanup)
+      - name: Cleanup
         if: always()
-        run: sudo pkill tpws || true
+        run: |
+          pkill -f nodpi.py || true
