@@ -1,12 +1,10 @@
-      - name: Run zapret
-        run: |
-          # Запускаем с правильными параметрами для v70
-          sudo /usr/local/bin/tpws --port=989 --bind-addr=127.0.0.1 --split-pos=2 --oob --disorder --daemon
-          echo "✅ zapret запущен"
-          sleep 3
-          ps aux | grep tpws
-      
-      - name: Test connection
-        run: |
-          echo "Проверяем доступ к сайту через zapret..."
-          curl -I https://9111.ru --connect-timeout 10 --proxy 127.0.0.1:989 || echo "Сайт недоступен"
+name: Simple Test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Hello World"
