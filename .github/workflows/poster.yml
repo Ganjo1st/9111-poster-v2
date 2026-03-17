@@ -2,110 +2,50 @@ name: 9111 Poster
 
 on:
   schedule:
-    # Запуск каждый час
+    # Запуск каждый час (можно изменить)
     - cron: '0 * * * *'
   workflow_dispatch:  # Возможность ручного запуска
   push:
     branches: [ main ]
 
-# Добавляем permissions для загрузки артефактов
-permissions:
-  contents: read
-  actions: write
-
 jobs:
   post-to-9111:
-    runs-on: ubuntu-24.04  # Явно указываем версию
+    runs-on: ubuntu-latest
     
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v4  # Обновляем до v4
+      uses: actions/checkout@v3
       
-    - name: Set up Python
-      uses: actions/setup-python@v5  # Обновляем до v5
+    - name: Setup Python
+      uses: actions/setup-python@v4
       with:
         python-version: '3.10'
         cache: 'pip'
-    
-    - name: Install system dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y \
-          chromium-browser \
-          chromium-chromedriver \
-          xvfb \
-          libgl1-mesa-glx \
-          libxdamage1 \
-          libxcomposite1 \
-          libxrandr2 \
-          libgbm1 \
-          libxkbcommon0 \
-          libpango-1.0-0 \
-          libcairo2
-    
-    - name: Install Python dependencies
+        
+    - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
         
-    - name: Create directories
+    - name: Install Chrome
       run: |
-        mkdir -p temp_media
-        mkdir -p logs
-        mkdir -p sessions
-        chmod -R 777 temp_media logs sessions
-        
-    - name: Check Chrome installation
-      run: |
-        chromium-browser --version
-        chromedriver --version
+        sudo apt-get update
+        sudo apt-get install -y google-chrome-stable
         
     - name: Run poster
       env:
-        # 9111 credentials
         NINTH_EMAIL: ${{ secrets.NINTH_EMAIL }}
         NINTH_PASSWORD: ${{ secrets.NINTH_PASSWORD }}
-        USER_HASH: ${{ secrets.USER_HASH }}
-        UUK: ${{ secrets.UUK }}
-        
-        # Telegram
         TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
         CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
-        
-        # Settings
-        PUBLICATION_RUBRIC_ID: "382235"
-        PUBLICATION_TAGS: "новости, закон, право, россия"
-        MAX_POSTS_PER_RUN: "3"
-        
-      run: |
-        # Запускаем с Xvfb для виртуального дисплея
-        xvfb-run -a -s "-screen 0 1920x1080x24" python main_github.py
-        
+        USER_HASH: ${{ secrets.USER_HASH }}
+        UUK: ${{ secrets.UUK }}
+      run: python main.py
+      
     - name: Upload logs
-      if: always()  # Загружаем даже при ошибке
-      uses: actions/upload-artifact@v4  # Обновляем до v4
+      if: always()
+      uses: actions/upload-artifact@v3
       with:
-        name: logs-${{ github.run_id }}
-        path: |
-          logs/
-          !logs/error_*.png
+        name: poster-logs
+        path: logs/
         retention-days: 7
-        if-no-files-found: ignore
-        
-    - name: Upload error screenshots
-      if: failure()  # Только при ошибке
-      uses: actions/upload-artifact@v4  # Обновляем до v4
-      with:
-        name: error-screenshots-${{ github.run_id }}
-        path: logs/error_*.png
-        retention-days: 7
-        if-no-files-found: ignore
-        
-    - name: Upload session data (for debugging)
-      if: failure()  # Только при ошибке
-      uses: actions/upload-artifact@v4
-      with:
-        name: session-data-${{ github.run_id }}
-        path: sessions/
-        retention-days: 3
-        if-no-files-found: ignore
