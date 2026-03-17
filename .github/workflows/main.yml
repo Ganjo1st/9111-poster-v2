@@ -2,10 +2,9 @@ name: 9111 Poster
 
 on:
   schedule:
-    # Запуск каждый день в 10:00 и 18:00 по Москве (UTC+3)
     - cron: '0 7 * * *'   # 10:00 МСК
     - cron: '0 15 * * *'  # 18:00 МСК
-  workflow_dispatch:  # Возможность ручного запуска
+  workflow_dispatch:
 
 jobs:
   post-to-9111:
@@ -30,10 +29,19 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt
         
+    - name: Get fresh Russian proxies
+      run: |
+        # Скачиваем список российских прокси
+        curl -o russian_proxies.txt https://raw.githubusercontent.com/ClearProxy/checked-proxy-list/main/http/raw/country/RU.txt
+        # Берем первый рабочий прокси из списка
+        export PROXY=$(head -1 russian_proxies.txt)
+        echo "Используем прокси: $PROXY"
+        echo "PROXY=$PROXY" >> $GITHUB_ENV
+        
     - name: Create logs directory
       run: mkdir -p logs
       
-    - name: Run 9111 poster (Selenium version)
+    - name: Run 9111 poster with proxy
       env:
         NINTH_EMAIL: ${{ secrets.NINTH_EMAIL }}
         NINTH_PASSWORD: ${{ secrets.NINTH_PASSWORD }}
@@ -41,7 +49,9 @@ jobs:
         TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
         USER_HASH: ${{ secrets.USER_HASH }}
         UUK: ${{ secrets.UUK }}
-      run: python main_github.py  # <-- ИЗМЕНЕНО!
+        HTTP_PROXY: http://${{ env.PROXY }}
+        HTTPS_PROXY: http://${{ env.PROXY }}
+      run: python main_github.py
       
     - name: Upload logs
       if: always()
