@@ -52,81 +52,35 @@ def setup_driver():
     return driver
 
 
-def login_with_cookies(driver):
-    """Загружает сохраненные куки"""
-    cookies_file = "sessions/cookies.pkl"
-    if os.path.exists(cookies_file):
+def add_cookies_from_file(driver, cookies_file="sessions/cookies.pkl"):
+    """Добавляет куки из файла в driver"""
+    cookies = [
+        {'name': 'user_hash', 'value': Config.USER_HASH, 'domain': '.9111.ru', 'path': '/'},
+        {'name': 'uuk', 'value': 'cad1a52ec9d948e6cc9ef7cae9009203', 'domain': '.9111.ru', 'path': '/'},
+        {'name': 'geo', 'value': '91-817-1', 'domain': '.9111.ru', 'path': '/'},
+        {'name': 'au', 'value': '%7B%22u%22%3A2368040%2C%22k%22%3A%22aa8ca3729252da5450cdb0862352503d%22%2C%22t%22%3A1773746119%7D', 'domain': '.9111.ru', 'path': '/'},
+    ]
+    
+    # Сначала открываем домен, чтобы можно было добавить куки
+    driver.get("https://9111.ru")
+    time.sleep(2)
+    
+    for cookie in cookies:
         try:
-            with open(cookies_file, 'rb') as f:
-                cookies = pickle.load(f)
-            
-            driver.get("https://9111.ru")
-            time.sleep(2)
-            
-            for cookie in cookies:
-                driver.add_cookie(cookie)
-            
-            driver.refresh()
-            time.sleep(3)
-            logger.info("✅ Куки загружены")
-            return True
+            driver.add_cookie(cookie)
+            logger.info(f"✅ Добавлена кука: {cookie['name']}")
         except Exception as e:
-            logger.error(f"❌ Ошибка загрузки кук: {e}")
-    return False
-
-
-def save_cookies(driver):
-    """Сохраняет куки после входа"""
-    try:
-        os.makedirs("sessions", exist_ok=True)
-        cookies = driver.get_cookies()
-        with open("sessions/cookies.pkl", 'wb') as f:
-            pickle.dump(cookies, f)
-        logger.info("✅ Куки сохранены")
-    except Exception as e:
-        logger.error(f"❌ Ошибка сохранения кук: {e}")
-
-
-def login_manually(driver):
-    """Ручной вход через форму"""
-    try:
-        driver.get("https://9111.ru")
-        time.sleep(3)
-        
-        # Ищем кнопку входа
-        try:
-            login_btn = driver.find_element(By.XPATH, "//a[contains(text(), 'Вход')]")
-            login_btn.click()
-            time.sleep(2)
-        except:
-            pass
-        
-        # Вводим логин и пароль
-        email_input = WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.NAME, "email"))
-        )
-        email_input.send_keys(Config.NINTH_EMAIL)
-        
-        password_input = driver.find_element(By.NAME, "password")
-        password_input.send_keys(Config.NINTH_PASSWORD)
-        
-        # Отправляем форму
-        submit_btn = driver.find_element(By.XPATH, "//button[@type='submit']")
-        submit_btn.click()
-        
-        time.sleep(5)
-        
-        # Проверяем успешность входа
-        if "user_hash" in driver.page_source:
-            logger.info("✅ Вход выполнен успешно")
-            save_cookies(driver)
-            return True
-        else:
-            logger.error("❌ Ошибка входа")
-            return False
-            
-    except Exception as e:
-        logger.error(f"❌ Ошибка при входе: {e}")
+            logger.warning(f"⚠️ Не удалось добавить куку {cookie['name']}: {e}")
+    
+    driver.refresh()
+    time.sleep(3)
+    
+    # Проверяем, авторизованы ли мы
+    if "user_hash" in driver.page_source or Config.USER_HASH in driver.page_source:
+        logger.info("✅ Успешно авторизованы через куки")
+        return True
+    else:
+        logger.warning("⚠️ Возможно, не авторизованы")
         return False
 
 
@@ -155,6 +109,7 @@ def create_publication(driver, title: str, content: str, rubric_name: str = "н�
             EC.presence_of_element_located((By.ID, "topic_name"))
         )
         title_div.click()
+        title_div.clear()
         title_div.send_keys(title)
         time.sleep(1)
         
@@ -187,20 +142,21 @@ def create_publication(driver, title: str, content: str, rubric_name: str = "н�
         time.sleep(5)
         
         # Проверяем успех
-        if "спасибо" in driver.page_source.lower() or "публикация успешно" in driver.page_source.lower():
+        page_source = driver.page_source.lower()
+        if "спасибо" in page_source or "публикация успешно" in page_source:
             logger.info("✅ Публикация успешно создана!")
             return True
+        elif "уникален" in page_source:
+            logger.warning("⚠️ Заголовок не уникален")
+            return False
         else:
-            # Проверяем на ошибку уникальности
-            if "уникален" in driver.page_source.lower():
-                logger.warning("⚠️ Заголовок не уникален")
-            else:
-                logger.error("❌ Неизвестная ошибка")
+            logger.error("❌ Неизвестная ошибка")
+            # Делаем скриншот для отладки
+            driver.save_screenshot(f"error_{int(time.time())}.png")
             return False
             
     except Exception as e:
         logger.error(f"❌ Ошибка при создании публикации: {e}")
-        # Делаем скриншот для отладки
         driver.save_screenshot(f"error_{int(time.time())}.png")
         return False
 
@@ -238,19 +194,16 @@ def get_telegram_posts():
 
 def main():
     logger.info("=" * 50)
-    logger.info("🚀 Запуск 9111 Poster (Selenium)")
+    logger.info("🚀 Запуск 9111 Poster (Selenium с куками)")
     logger.info("=" * 50)
 
     # 1. Настраиваем драйвер
     driver = setup_driver()
     
     try:
-        # 2. Пытаемся загрузить сохраненные куки
-        if not login_with_cookies(driver):
-            # Если нет кук, входим вручную
-            if not login_manually(driver):
-                logger.error("❌ Не удалось авторизоваться")
-                return
+        # 2. Добавляем куки
+        if not add_cookies_from_file(driver):
+            logger.warning("⚠️ Продолжаем, но возможно не авторизованы")
         
         # 3. Получаем посты
         posts = get_telegram_posts()
