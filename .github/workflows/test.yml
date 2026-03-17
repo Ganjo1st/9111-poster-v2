@@ -1,1 +1,66 @@
+name: Test Auth with zapret
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      
+      - name: Install Chrome and iptables
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y google-chrome-stable iptables
+          google-chrome --version
+      
+      - name: Setup zapret
+        run: |
+          chmod +x ./setup_zapret.sh
+          sudo ./setup_zapret.sh
+      
+      - name: Create fake TLS data
+        run: |
+          sudo bash -c 'echo -n -e "\x16\x03\x01\x02\x00\x01\x00\x01\xfc\x03\x03" > /root/fake_tls.bin'
+          sudo chmod 644 /root/fake_tls.bin
+          echo "✅ Создан файл для fake TLS"
+      
+      - name: Run nfqws
+        run: |
+          sudo /usr/local/bin/nfqws --daemon --qnum=989 --dpi-desync=fake,split --dpi-desync-fake-tls=/root/fake_tls.bin --dpi-desync-split-pos=2
+          echo "✅ nfqws запущен"
+          sleep 3
+      
+      - name: Install Python dependencies
+        run: |
+          pip install selenium
+      
+      - name: Create screenshots dir
+        run: mkdir -p screenshots
+      
+      - name: Run test
+        env:
+          USER_HASH: ${{ secrets.USER_HASH }}
+          UUK: ${{ secrets.UUK }}
+        run: python src/poster.py
+      
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots
+          path: "*.png"
+      
+      - name: Cleanup
+        if: always()
+        run: |
+          sudo pkill nfqws || true
+          sudo rm -f /root/fake_tls.bin
 
