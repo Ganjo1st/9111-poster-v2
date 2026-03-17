@@ -11,6 +11,7 @@ import logging
 import time
 import pickle
 import json
+import re
 from pathlib import Path
 from typing import Optional, Dict, Any
 
@@ -52,7 +53,7 @@ class Auth9111:
         
         # Настраиваем заголовки как у реального браузера
         scraper.headers.update({
-            'User-Agent': self.ua.random,
+            'User-Agent': self.ua.random if hasattr(self, 'ua') else 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
             'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
             'Accept-Encoding': 'gzip, deflate, br',
@@ -74,7 +75,6 @@ class Auth9111:
     
     def _get_csrf_token(self, html: str) -> Optional[str]:
         """Извлекает CSRF токен из HTML."""
-        import re
         match = re.search(r'name="csrf_token".*?value="([^"]+)"', html)
         if match:
             return match.group(1)
@@ -195,7 +195,7 @@ class Auth9111:
     def get_cookies_json(self) -> str:
         """Возвращает куки в формате JSON для сохранения в секреты."""
         cookies_dict = self.session.cookies.get_dict()
-        return json.dumps(cookies_dict)
+        return json.dumps(cookies_dict, ensure_ascii=False)
     
     def load_cookies_from_json(self, cookies_json: str):
         """Загружает куки из JSON строки."""
