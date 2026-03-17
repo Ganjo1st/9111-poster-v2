@@ -1,10 +1,15 @@
 #!/bin/bash
 set -e
 
-echo "📥 Скачиваем NoDPI..."
+echo "📥 Скачиваем NoDPI (рабочая версия)..."
 cd /tmp
 rm -rf NoDPI
-git clone https://github.com/aeronik16/NoDPI_july2025.git NoDPI
+git clone https://github.com/ValdikSS/GoodbyeDPI.git NoDPI
 cd NoDPI
 
+echo "🔧 Компилируем GoodbyeDPI..."
+make
+
 echo "✅ NoDPI готов к запуску"
+echo "📁 Содержимое папки:"
+ls -la
