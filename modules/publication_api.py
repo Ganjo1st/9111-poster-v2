@@ -79,6 +79,10 @@ class PublicationAPI:
         """
         logger.info(f"🚀 Начало публикации: {title[:50]}...")
 
+                # Добавим отладку кук
+        cookies_dict = self.session.cookies.get_dict()
+        logger.info(f"🍪 Отправляемые куки: {list(cookies_dict.keys())}")
+
         # 1. Делаем заголовок уникальным
         original_title = title
         title = self._make_title_unique(title)
@@ -224,7 +228,7 @@ class PublicationAPI:
                     logger.warning("⚠️ Заголовок не уникален, пробуем еще раз с другим")
                     # Рекурсивно пробуем с более уникальным заголовком
                     new_title = f"{original_title} {random.randint(1000, 9999)}"
-                    return self.create_publication(
+                    return self.(
                         new_title,
                         content,
                         rubric_name,
