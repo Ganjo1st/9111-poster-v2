@@ -18,23 +18,34 @@ class PublicationAPI:
 
     def __init__(self, session: requests.Session, user_hash: str, uuk: str):
         """
-        :param session: Авторизованная сессия requests
+        :param session: Сессия requests (может быть неавторизованной)
         :param user_hash: Хеш пользователя (секрет USER_HASH)
         :param uuk: UUK токен (секрет UUK)
         """
         self.session = session
         self.user_hash = user_hash
         self.uuk = uuk
+        
+        # Важно: сначала обновляем заголовки
         self.session.headers.update({
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
             'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
             'Accept-Encoding': 'gzip, deflate, br',
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'Origin': self.BASE_URL,
-            'Referer': self.ADD_TITLE_URL,
+            'Connection': 'keep-alive',
             'Upgrade-Insecure-Requests': '1',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+            'Sec-Fetch-User': '?1',
+            'Cache-Control': 'max-age=0',
         })
+        
+        # Устанавливаем куки
+        self.session.cookies.set('user_hash', user_hash, domain='.9111.ru', path='/')
+        self.session.cookies.set('uuk', uuk, domain='.9111.ru', path='/')
+        
+        logger.info(f"✅ PublicationAPI инициализирован с user_hash={user_hash[:10]}...")
 
     def create_publication(
         self,
@@ -58,31 +69,63 @@ class PublicationAPI:
         rubric_id = get_rubric_id(rubric_name)
         logger.info(f"Рубрика: '{rubric_name}' (ID: {rubric_id})")
 
-        # 2. Сначала загружаем страницу, чтобы получить куки и csrf
+        # 2. Сначала заходим на главную, чтобы получить сессионные куки
+        logger.info("Загружаем главную страницу...")
+        try:
+            main_response = self.session.get('https://9111.ru', timeout=30, allow_redirects=True)
+            logger.info(f"Главная страница вернула статус: {main_response.status_code}")
+            
+            # Проверяем куки после загрузки главной
+            cookies_dict = self.session.cookies.get_dict()
+            logger.info(f"Текущие куки: {list(cookies_dict.keys())}")
+            
+        except Exception as e:
+            logger.warning(f"Ошибка при загрузке главной: {e}")
+
+        # 3. Загружаем страницу создания публикации
         logger.info("Загружаем страницу создания публикации...")
-        get_response = self.session.get(self.ADD_TITLE_URL, timeout=30)
-        logger.info(f"Статус загрузки страницы: {get_response.status_code}")
+        time.sleep(2)  # Небольшая задержка
         
-        if get_response.status_code != 200:
-            logger.error(f"❌ Не удалось загрузить страницу: {get_response.status_code}")
+        try:
+            get_response = self.session.get(self.ADD_TITLE_URL, timeout=30, allow_redirects=True)
+            logger.info(f"Статус загрузки страницы: {get_response.status_code}")
+            logger.info(f"URL после загрузки: {get_response.url}")
+            
+            if get_response.status_code != 200:
+                logger.error(f"❌ Не удалось загрузить страницу: {get_response.status_code}")
+                # Сохраняем часть ответа для отладки
+                logger.error(f"Первые 500 символов ответа: {get_response.text[:500]}")
+                return False
+        except Exception as e:
+            logger.error(f"❌ Ошибка при загрузке страницы: {e}")
             return False
 
-        # 3. Извлекаем скрытые поля формы
+        # 4. Извлекаем скрытые поля формы
         soup = BeautifulSoup(get_response.text, "html.parser")
         form = soup.find("form", {"id": "form_create_topic_group"})
         
         form_data = {}
         if form:
-            for input_tag in form.find_all("input", type="hidden"):
+            # Собираем все input поля
+            for input_tag in form.find_all("input"):
                 name = input_tag.get("name")
                 value = input_tag.get("value", "")
                 if name:
                     form_data[name] = value
-            logger.info(f"✅ Найдено скрытых полей: {len(form_data)}")
+                    logger.debug(f"Найдено поле: {name}={value[:20] if len(value) > 20 else value}")
+            
+            # Собираем textarea
+            for textarea in form.find_all("textarea"):
+                name = textarea.get("name")
+                if name:
+                    form_data[name] = textarea.text
+                    logger.debug(f"Найдено textarea: {name}")
+            
+            logger.info(f"✅ Найдено полей в форме: {len(form_data)}")
         else:
             logger.warning("⚠️ Форма не найдена, продолжаем без скрытых полей")
 
-        # 4. Добавляем обязательные поля
+        # 5. Добавляем обязательные поля
         form_data.update({
             "title": title,
             "content": content,
@@ -93,23 +136,25 @@ class PublicationAPI:
             "submit": "Опубликовать",
         })
 
-        # 5. Добавляем куки в данные (иногда сайт проверяет)
-        cookies = self.session.cookies.get_dict()
-        if 'user_hash' in cookies:
-            form_data['cookie_user_hash'] = cookies['user_hash']
-        if 'uuk' in cookies:
-            form_data['cookie_uuk'] = cookies['uuk']
-
-        logger.info(f"📦 Отправляем данные (размер: {len(form_data)} полей)")
-        logger.debug(f"Данные: { {k: v[:20] + '...' if isinstance(v, str) and len(v) > 20 else v for k, v in form_data.items()} }")
+        logger.info(f"📦 Отправляем данные (всего полей: {len(form_data)})")
+        
+        # Логируем только имена полей для безопасности
+        logger.info(f"Имена полей: {list(form_data.keys())}")
 
         # 6. Отправляем POST-запрос
         try:
+            # Добавляем задержку перед POST
+            time.sleep(3)
+            
             response = self.session.post(
                 self.ADD_TITLE_URL,
                 data=form_data,
                 allow_redirects=True,
-                timeout=30
+                timeout=30,
+                headers={
+                    'Referer': self.ADD_TITLE_URL,
+                    'Origin': self.BASE_URL,
+                }
             )
 
             logger.info(f"🌐 Статус ответа: {response.status_code}")
@@ -124,7 +169,8 @@ class PublicationAPI:
                     "публикация успешно",
                     "ваша публикация",
                     "успешно добавлена",
-                    "опубликована"
+                    "опубликована",
+                    "благодарим"
                 ]
                 
                 for indicator in success_indicators:
@@ -144,13 +190,19 @@ class PublicationAPI:
                         logger.warning("⚠️ Заголовок не уникален")
                     return False
                 
+                # Проверяем, нет ли перенаправления на страницу с публикацией
+                if response.url != self.ADD_TITLE_URL:
+                    logger.info(f"✅ Перенаправление на {response.url} - вероятно успех")
+                    return True
+                
                 # Если нет явных ошибок, считаем успехом
                 logger.warning("⚠️ Нет явных признаков успеха или ошибки, но статус 200")
                 return True
                 
             elif response.status_code == 403:
-                logger.error("❌ Ошибка 403 - доступ запрещен. Возможно, нужны дополнительные заголовки")
+                logger.error("❌ Ошибка 403 - доступ запрещен")
                 logger.error(f"Заголовки запроса: {dict(self.session.headers)}")
+                logger.error(f"Cookies: {dict(self.session.cookies.get_dict())}")
                 return False
             else:
                 logger.error(f"❌ HTTP ошибка: {response.status_code}")
