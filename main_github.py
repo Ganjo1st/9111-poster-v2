@@ -3,7 +3,7 @@
 
 """
 Основной скрипт для GitHub Actions.
-Стратегия: загрузка кук -> проверка авторизации -> поиск прокси -> публикация через прокси
+ФИНАЛЬНАЯ СТРАТЕГИЯ: прокси с первого запроса!
 """
 
 import os
@@ -41,8 +41,8 @@ logger = logging.getLogger('9111_poster')
 def main():
     """Основная функция."""
     logger.info("=" * 60)
-    logger.info("🚀 ЗАПУСК 9111 POSTER (GitHub Actions Edition)")
-    logger.info("📋 Стратегия: куки -> авторизация -> прокси -> публикация")
+    logger.info("🚀 ЗАПУСК 9111 POSTER (ФИНАЛЬНАЯ ВЕРСИЯ)")
+    logger.info("📋 Стратегия: прокси -> куки -> авторизация -> публикация")
     logger.info("=" * 60)
     
     # Проверяем наличие всех необходимых секретов
@@ -76,32 +76,65 @@ def main():
     
     logger.info(f"🍪 Загруженные куки: {list(cookies.keys())}")
     
-    # ШАГ 2: Авторизация БЕЗ прокси с использованием кук
+    # ШАГ 2: Поиск рабочего российского прокси
     logger.info("=" * 60)
-    logger.info("🔑 ШАГ 2: Авторизация без прокси")
+    logger.info("🔌 ШАГ 2: Поиск рабочего российского прокси")
     logger.info("=" * 60)
     
-    auth = Auth9111(proxies=None)  # Явно без прокси
+    proxy_manager = ProxyManager()
+    
+    # Ищем прокси специально для 9111.ru
+    working_proxy = proxy_manager.find_working_proxy(
+        max_attempts=50,
+        target_url="https://9111.ru"
+    )
+    
+    if not working_proxy:
+        logger.error("❌ КРИТИЧЕСКАЯ ОШИБКА: Не найден рабочий российский прокси")
+        logger.error("Без прокси сайт блокирует все запросы. Завершаем работу.")
+        return
+    
+    logger.info(f"✅ Найден рабочий прокси: {working_proxy}")
+    
+    # ШАГ 3: Создание сессии СРАЗУ с прокси
+    logger.info("=" * 60)
+    logger.info("🔑 ШАГ 3: Создание сессии с прокси и применение кук")
+    logger.info("=" * 60)
+    
+    # Получаем словарь прокси
+    proxy_dict = proxy_manager.get_proxy_dict(working_proxy)
+    
+    # Создаем сессию СРАЗУ с прокси
+    auth = Auth9111(proxies=proxy_dict)
     
     # Применяем куки к сессии
     CookieManager.apply_cookies_to_session(auth.session, cookies)
-    logger.info("🍪 Куки применены к сессии")
+    logger.info("🍪 Куки применены к сессии с прокси")
     
-    # Проверяем авторизацию
-    logger.info("🔑 Проверка авторизации...")
+    # ШАГ 4: Проверка авторизации (уже через прокси)
+    logger.info("🔑 Проверка авторизации через прокси...")
     
     if auth.is_authenticated():
-        logger.info("✅ Авторизация подтверждена (активная сессия с куками)")
+        logger.info("✅ Авторизация подтверждена (куки работают через прокси)")
     else:
-        logger.info("🔑 Куки не работают, пробуем выполнить вход...")
+        logger.warning("⚠️ Куки не работают через прокси, пробуем выполнить вход...")
+        logger.info("🔑 Выполняем вход через прокси...")
+        
         if not auth.login(os.environ['NINTH_EMAIL'], os.environ['NINTH_PASSWORD']):
-            logger.error("❌ Не удалось авторизоваться")
+            logger.error("❌ Не удалось авторизоваться даже через прокси")
             return
-        logger.info("✅ Авторизация выполнена")
+        
+        logger.info("✅ Авторизация выполнена через прокси")
+        
+        # Сохраняем новые куки для будущих запусков
+        new_cookies = auth.session.cookies.get_dict()
+        logger.info(f"💾 Получены новые куки ({len(new_cookies)} шт.)")
+        
+        # Здесь можно сохранить новые куки в файл
     
-    # ШАГ 3: Парсинг Telegram (без прокси)
+    # ШАГ 5: Парсинг Telegram (без прокси - это отдельно)
     logger.info("=" * 60)
-    logger.info("📱 ШАГ 3: Парсинг Telegram канала")
+    logger.info("📱 ШАГ 5: Парсинг Telegram канала")
     logger.info("=" * 60)
     
     logger.info(f"📱 Канал: {os.environ['CHANNEL_ID']}")
@@ -128,30 +161,9 @@ def main():
         logger.exception(f"❌ Ошибка парсинга Telegram: {e}")
         return
     
-    # ШАГ 4: Поиск рабочего российского прокси
+    # ШАГ 6: Публикация постов (уже через прокси)
     logger.info("=" * 60)
-    logger.info("🔌 ШАГ 4: Поиск рабочего российского прокси")
-    logger.info("=" * 60)
-    
-    proxy_manager = ProxyManager()
-    
-    # Ищем прокси специально для 9111.ru
-    working_proxy = proxy_manager.find_working_proxy(
-        max_attempts=50,
-        target_url="https://9111.ru/pubs/add/title/"
-    )
-    
-    if not working_proxy:
-        logger.warning("⚠️ Рабочий прокси не найден, пробуем публикацию без прокси")
-    else:
-        logger.info(f"✅ Найден рабочий прокси: {working_proxy}")
-        
-        # Обновляем сессию с новым прокси
-        proxy_manager.update_session_proxy(auth.session, working_proxy)
-    
-    # ШАГ 5: Публикация через прокси (если нашли)
-    logger.info("=" * 60)
-    logger.info("📝 ШАГ 5: Публикация постов")
+    logger.info("📝 ШАГ 6: Публикация постов")
     logger.info("=" * 60)
     
     # Инициализация API публикаций
