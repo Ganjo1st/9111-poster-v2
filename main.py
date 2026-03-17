@@ -34,17 +34,63 @@ def get_auth_class():
 def get_session_from_auth(auth):
     """Пытается получить session из объекта auth разными способами"""
     
-    # Способ 1: прямой атрибут session
+    # Способ 1: используем driver для создания сессии (САМЫЙ ВАЖНЫЙ)
+    if hasattr(auth, 'driver') and auth.driver:
+        logger.info("🔄 Пробуем создать сессию из Selenium driver")
+        try:
+            import requests
+            
+            session = requests.Session()
+            
+            # Получаем cookies из driver
+            cookies = auth.driver.get_cookies()
+            logger.info(f"📦 Получено {len(cookies)} cookies из driver")
+            
+            if not cookies:
+                logger.warning("⚠️ Driver вернул пустой список cookies")
+            else:
+                # Добавляем cookies в сессию
+                for cookie in cookies:
+                    session.cookies.set(cookie['name'], cookie['value'])
+                    logger.debug(f"  Cookie: {cookie['name']}={cookie['value'][:20]}...")
+                
+                # Добавляем стандартные headers
+                session.headers.update({
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+                    'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
+                    'Accept-Encoding': 'gzip, deflate, br',
+                    'Connection': 'keep-alive',
+                    'Upgrade-Insecure-Requests': '1',
+                })
+                
+                # Проверяем, работает ли сессия
+                test_response = session.get('https://9111.ru', allow_redirects=True, timeout=10)
+                logger.info(f"🌐 Тестовый запрос вернул статус: {test_response.status_code}")
+                
+                if test_response.status_code == 200:
+                    logger.info("✅ Сессия успешно создана и работает")
+                    return session
+                else:
+                    logger.warning(f"⚠️ Сессия создана, но вернула статус {test_response.status_code}")
+                    return session  # Все равно возвращаем, может работать
+                    
+        except Exception as e:
+            logger.warning(f"❌ Не удалось создать сессию из driver: {e}")
+            import traceback
+            logger.warning(traceback.format_exc())
+    
+    # Способ 2: прямой атрибут session
     if hasattr(auth, 'session'):
         logger.info("✅ Найден auth.session")
         return auth.session
     
-    # Способ 2: атрибут _session
+    # Способ 3: атрибут _session
     if hasattr(auth, '_session'):
         logger.info("✅ Найден auth._session")
         return auth._session
     
-    # Способ 3: метод get_session()
+    # Способ 4: метод get_session()
     if hasattr(auth, 'get_session') and callable(auth.get_session):
         try:
             session = auth.get_session()
@@ -53,44 +99,6 @@ def get_session_from_auth(auth):
                 return session
         except:
             pass
-    
-    # Способ 4: используем driver для создания сессии
-    if hasattr(auth, 'driver') and auth.driver:
-        logger.info("🔄 Пробуем создать сессию из driver")
-        try:
-            import requests
-            
-            session = requests.Session()
-            
-            # Получаем cookies из driver
-            cookies = auth.driver.get_cookies()
-            logger.info(f"Получено {len(cookies)} cookies из driver")
-            
-            # Добавляем cookies в сессию
-            for cookie in cookies:
-                session.cookies.set(cookie['name'], cookie['value'])
-            
-            # Добавляем стандартные headers
-            session.headers.update({
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-                'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
-                'Accept-Encoding': 'gzip, deflate, br',
-                'Connection': 'keep-alive',
-                'Upgrade-Insecure-Requests': '1',
-            })
-            
-            # Проверяем, работает ли сессия
-            test_response = session.get('https://9111.ru', allow_redirects=True, timeout=10)
-            if test_response.status_code == 200:
-                logger.info("✅ Сессия успешно создана и работает")
-                return session
-            else:
-                logger.warning(f"Сессия создана, но вернула статус {test_response.status_code}")
-                return session  # Все равно возвращаем, может работать
-                
-        except Exception as e:
-            logger.warning(f"Не удалось создать сессию из driver: {e}")
     
     # Способ 5: загружаем cookies из файла
     if hasattr(auth, 'cookies_file') and auth.cookies_file:
@@ -140,11 +148,16 @@ def get_telegram_posts():
                 posts = parser.parse_channel_posts()
                 if posts:
                     logger.info(f"✅ Получено {len(posts)} постов через parse_channel_posts()")
+                    # Выводим информацию о первом посте
+                    if len(posts) > 0:
+                        logger.info(f"📄 Первый пост: {posts[0].get('title', '')[:50]}...")
                     return posts
                 else:
                     logger.warning("parse_channel_posts() вернул пустой список")
             except Exception as e:
                 logger.warning(f"Ошибка в parse_channel_posts(): {e}")
+                import traceback
+                logger.warning(traceback.format_exc())
         
     except Exception as e:
         logger.error(f"❌ Ошибка при создании парсера: {e}")
@@ -170,9 +183,18 @@ def main():
         auth = AuthClass(Config.NINTH_EMAIL, Config.NINTH_PASSWORD)
         
         if hasattr(auth, 'login'):
-            if not auth.login():
+            logger.info("🔐 Выполняем login...")
+            login_result = auth.login()
+            if not login_result:
                 logger.error("❌ Ошибка авторизации")
                 return
+            logger.info("✅ Login выполнен успешно")
+        
+        # Проверяем наличие driver
+        if hasattr(auth, 'driver'):
+            logger.info(f"🚗 Driver доступен: {auth.driver is not None}")
+            if auth.driver:
+                logger.info(f"🌐 Текущий URL: {auth.driver.current_url}")
         
         logger.info("✅ Авторизация выполнена")
         
@@ -187,6 +209,8 @@ def main():
         
     except Exception as e:
         logger.error(f"❌ Ошибка при авторизации: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         return
 
     # 3. Парсинг Telegram
