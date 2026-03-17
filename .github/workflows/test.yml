@@ -30,7 +30,6 @@ jobs:
         run: |
           sudo bash -c 'echo -n -e "\x16\x03\x01\x02\x00\x01\x00\x01\xfc\x03\x03" > /root/fake_tls.bin'
           sudo chmod 644 /root/fake_tls.bin
-          sudo ls -la /root/fake_tls.bin
           echo "✅ Создан файл для fake TLS"
       
       - name: Run nfqws
@@ -38,12 +37,6 @@ jobs:
           sudo /usr/local/bin/nfqws --daemon --qnum=989 --dpi-desync=fake,split --dpi-desync-fake-tls=/root/fake_tls.bin --dpi-desync-split-pos=2
           echo "✅ nfqws запущен"
           sleep 3
-          ps aux | grep nfqws
-      
-      - name: Test connection
-        run: |
-          echo "Проверяем доступ к 9111.ru..."
-          curl -I https://9111.ru --connect-timeout 10 || echo "❌ Сайт недоступен"
       
       - name: Install Python dependencies
         run: |
