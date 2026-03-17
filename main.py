@@ -41,20 +41,15 @@ def main():
         logger.error("❌ Не удалось найти класс авторизации")
         return
 
-    # 2. Авторизация с передачей email и password
+    # 2. Авторизация
     try:
-        # Передаем email и password при создании объекта
         auth = AuthClass(Config.NINTH_EMAIL, Config.NINTH_PASSWORD)
         
-        # Если есть метод login, вызываем его
         if hasattr(auth, 'login'):
             if not auth.login():
                 logger.error("❌ Ошибка авторизации")
                 return
-        else:
-            # Если нет метода login, считаем что авторизация прошла при создании
-            pass
-            
+                
         logger.info("✅ Авторизация успешна")
     except Exception as e:
         logger.error(f"❌ Ошибка при авторизации: {e}")
@@ -62,7 +57,10 @@ def main():
 
     # 3. Парсинг Telegram
     try:
+        # Создаем парсер с токеном
         parser = TelegramBotParser(Config.TELEGRAM_TOKEN)
+        
+        # Получаем посты, передавая channel_id
         posts = parser.get_posts(Config.CHANNEL_ID, limit=Config.POSTS_LIMIT)
 
         if not posts:
@@ -70,13 +68,18 @@ def main():
             return
 
         logger.info(f"✅ Получено {len(posts)} постов")
+        
+        # Выводим информацию о первом посте для отладки
+        if posts and len(posts) > 0:
+            first_post = posts[0]
+            logger.info(f"Пример поста - Заголовок: {first_post.get('title', '')[:50]}...")
+            
     except Exception as e:
         logger.error(f"❌ Ошибка при парсинге Telegram: {e}")
         return
 
     # 4. Публикация
     try:
-        # Получаем session из объекта auth
         if not hasattr(auth, 'session'):
             logger.error("❌ У объекта авторизации нет session")
             return
@@ -94,6 +97,10 @@ def main():
             title = post.get("title", "")[:100]
             content = post.get("content", "")
             
+            if not title or not content:
+                logger.warning(f"⚠️ Пост {i} пропущен: нет заголовка или контента")
+                continue
+                
             logger.info(f"Заголовок: {title}")
             
             success = pub_api.create_publication(
