@@ -1,5 +1,4 @@
-selenium==4.41.0
-webdriver-manager==4.0.2
-python-dotenv==1.1.0
-telethon==1.39.0
-cryptg==0.4.0
+selenium==4.15.0
+webdriver-manager==4.0.1
+requests==2.31.0
+python-dotenv==1.0.0
