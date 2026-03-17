@@ -113,7 +113,7 @@ def add_cookies_from_file(driver):
     ]
     
     # Сначала открываем домен, чтобы можно было добавить куки
-    logger.info="=" * 50)
+    logger.info("=" * 50)
     logger.info("🌐 ШАГ 1: Открываем главную страницу...")
     driver.get("https://9111.ru")
     time.sleep(5)
