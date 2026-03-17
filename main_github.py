@@ -11,6 +11,7 @@ import sys
 import logging
 import time
 import random
+import json
 from datetime import datetime
 from pathlib import Path
 
@@ -22,7 +23,6 @@ from modules.github_actions_auth import Auth9111
 from modules.telegram_bot_parser import TelegramRSSParser
 from modules.publication_api import PublicationAPI
 from modules.rubric_mapper import get_rubric_id
-from modules.config import Config
 
 # Настройка логирования
 logging.basicConfig(
@@ -49,7 +49,7 @@ def setup_proxy() -> dict:
             'https': f'http://{proxy}'
         }
     
-    # Пробуем получить прокси из других источников
+    # Список российских прокси для обхода блокировок
     proxy_list = [
         '46.17.47.48:80',
         '46.29.162.166:80',
@@ -157,39 +157,22 @@ def main():
     # Инициализация авторизации с прокси
     auth = Auth9111(proxies=proxies)
     
-    # Загружаем куки из переменных окружения
-    logger.info("🍪 Загрузка cookies из секретов...")
-    
-    # Здесь нужно добавить код для загрузки куки из секретов
-    # В идеале - сохранить куки в переменную окружения COOKIES_JSON
-    cookies_json = os.environ.get('COOKIES_JSON')
-    if cookies_json:
-        import json
-        try:
-            cookies = json.loads(cookies_json)
-            auth.session.cookies.update(cookies)
-            logger.info(f"✅ Загружено {len(cookies)} cookies")
-        except Exception as e:
-            logger.error(f"❌ Ошибка загрузки cookies: {e}")
-    
     # Проверяем авторизацию
     logger.info("🔑 Проверка авторизации...")
-    test_response = auth.session.get('https://9111.ru/my/', proxies=proxies)
     
-    if test_response.status_code == 200 and 'личный кабинет' in test_response.text.lower():
+    if auth.is_authenticated():
         logger.info("✅ Авторизация подтверждена")
     else:
-        logger.warning("⚠️ Авторизация не подтверждена, выполняем вход...")
-        # Пробуем авторизоваться
+        logger.info("🔑 Выполняем вход...")
         if not auth.login(os.environ['NINTH_EMAIL'], os.environ['NINTH_PASSWORD']):
             logger.error("❌ Не удалось авторизоваться")
             return
         logger.info("✅ Авторизация выполнена")
         
-        # Сохраняем куки для следующих запусков
-        cookies_to_save = auth.session.cookies.get_dict()
-        logger.info(f"💾 Cookies сохранены ({len(cookies_to_save)} шт.)")
-        # Здесь можно вывести инструкцию по сохранению куки в секреты
+        # Показываем куки для возможного сохранения
+        cookies_json = auth.get_cookies_json()
+        logger.info(f"💾 Cookies получены ({len(json.loads(cookies_json))} шт.)")
+        logger.info("💡 Совет: сохраните эти cookies в секрет COOKIES_JSON для будущих запусков")
     
     # Парсинг Telegram канала
     logger.info(f"📱 Парсинг Telegram канала: {os.environ['CHANNEL_ID']}")
@@ -210,7 +193,8 @@ def main():
         
         # Выводим первые несколько постов для отладки
         for i, post in enumerate(posts[:2], 1):
-            logger.info(f"📄 Пост {i}: {post.get('title', 'Без заголовка')[:100]}...")
+            title = post.get('title', 'Без заголовка')
+            logger.info(f"📄 Пост {i}: {title[:100]}...")
             
     except Exception as e:
         logger.exception(f"❌ Ошибка парсинга Telegram: {e}")
@@ -252,7 +236,7 @@ def main():
             content=content,
             rubric_name="новости",
             tags="новости, закон, право, общество",
-            image_url=image_url  # PublicationAPI должен уметь скачивать по URL
+            image_url=image_url
         )
         
         if success:
