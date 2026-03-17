@@ -1,193 +1,221 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""
+Модуль авторизации для GitHub Actions.
+Использует requests вместо Selenium для обхода блокировок.
+"""
+
 import os
 import logging
-import pickle
 import time
+import pickle
+import json
 from pathlib import Path
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service
+from typing import Optional, Dict, Any
 
-from modules.exceptions import AuthError
-from modules.logger import log_function_call
+import requests
+from fake_useragent import UserAgent
+import cloudscraper
 
 logger = logging.getLogger(__name__)
 
-
-class GitHubActionsAuth:
-    """
-    Авторизация для GitHub Actions с использованием кук и прямых параметров.
-    Использует Selenium с headless Chrome.
-    """
+class Auth9111:
+    """Класс для авторизации на 9111.ru через requests с обходом блокировок."""
     
-    def __init__(self, email: str, password: str, user_hash: str = None, uuk: str = None):
-        self.email = email
-        self.password = password
-        self.user_hash = user_hash
-        self.uuk = uuk
-        self.driver = None
-        self.cookies_file = Path("sessions/cookies.pkl")
-        
-    def _create_driver(self):
-        """Создание headless Chrome драйвера для GitHub Actions."""
-        chrome_options = Options()
-        chrome_options.add_argument("--headless=new")
-        chrome_options.add_argument("--no-sandbox")
-        chrome_options.add_argument("--disable-dev-shm-usage")
-        chrome_options.add_argument("--disable-gpu")
-        chrome_options.add_argument("--window-size=1920,1080")
-        chrome_options.add_argument("--disable-blink-features=AutomationControlled")
-        chrome_options.add_argument("--user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-        
-        # Добавляем экспериментальные опции для обхода детекта ботов
-        chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
-        chrome_options.add_experimental_option('useAutomationExtension', False)
-        
-        service = Service('/usr/bin/chromedriver')
-        self.driver = webdriver.Chrome(service=service, options=chrome_options)
-        
-        # Исполняем JS для маскировки webdriver
-        self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-        
-        return self.driver
+    BASE_URL = "https://9111.ru"
+    LOGIN_URL = f"{BASE_URL}/login/"
+    PROFILE_URL = f"{BASE_URL}/my/"
     
-    @log_function_call
-    def login_with_cookies(self) -> bool:
+    def __init__(self, proxies: dict = None):
         """
-        Пытается войти используя сохраненные куки.
+        Инициализация авторизации.
+        
+        Args:
+            proxies: Прокси для обхода блокировок (например, {'http': 'http://46.17.47.48:80', 'https': 'http://46.17.47.48:80'})
         """
-        if not self.cookies_file.exists():
-            logger.info("Файл с куками не найден")
-            return False
+        self.proxies = proxies
+        self.session = self._create_session()
+        self.ua = UserAgent()
+        
+    def _create_session(self) -> requests.Session:
+        """Создает сессию с обходом CloudFlare."""
+        scraper = cloudscraper.create_scraper(
+            interpreter='js',
+            delay=15,
+            browser={
+                'browser': 'chrome',
+                'platform': 'windows',
+                'mobile': False
+            }
+        )
+        
+        # Настраиваем заголовки как у реального браузера
+        scraper.headers.update({
+            'User-Agent': self.ua.random,
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'DNT': '1',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+            'Sec-Fetch-User': '?1',
+            'Cache-Control': 'max-age=0',
+        })
+        
+        if self.proxies:
+            scraper.proxies.update(self.proxies)
+            logger.info(f"🔌 Прокси настроены: {self.proxies}")
+        
+        return scraper
+    
+    def _get_csrf_token(self, html: str) -> Optional[str]:
+        """Извлекает CSRF токен из HTML."""
+        import re
+        match = re.search(r'name="csrf_token".*?value="([^"]+)"', html)
+        if match:
+            return match.group(1)
+        
+        match = re.search(r'csrf_token["\']?\s*:\s*["\']([^"\']+)', html)
+        if match:
+            return match.group(1)
+        
+        return None
+    
+    def login(self, email: str, password: str) -> bool:
+        """
+        Выполняет вход на сайт.
+        
+        Args:
+            email: Email пользователя
+            password: Пароль
             
+        Returns:
+            True если вход успешен
+        """
+        logger.info("🔑 Попытка входа на 9111.ru...")
+        
         try:
-            self._create_driver()
-            self.driver.get("https://9111.ru")
-            time.sleep(3)
+            # 1. Загружаем страницу входа для получения CSRF токена
+            response = self.session.get(self.LOGIN_URL, timeout=30)
             
-            with open(self.cookies_file, "rb") as f:
-                cookies = pickle.load(f)
-                
-            for cookie in cookies:
-                # Обрабатываем куки для Selenium
-                if 'expiry' in cookie:
-                    cookie['expiry'] = int(cookie['expiry'])
-                try:
-                    self.driver.add_cookie(cookie)
-                except Exception as e:
-                    logger.debug(f"Не удалось добавить куку {cookie.get('name')}: {e}")
-                    
-            self.driver.refresh()
-            time.sleep(3)
-            
-            # Проверяем, что мы авторизованы
-            if self._check_login_status():
-                logger.info("✅ Успешный вход по кукам")
-                return True
-            else:
-                logger.warning("Куки недействительны")
+            if response.status_code != 200:
+                logger.error(f"❌ Не удалось загрузить страницу входа: {response.status_code}")
                 return False
-                
-        except Exception as e:
-            logger.error(f"Ошибка при входе по кукам: {e}")
-            return False
-    
-    @log_function_call
-    def login_with_credentials(self) -> bool:
-        """
-        Вход с использованием email и пароля.
-        """
-        try:
-            if not self.driver:
-                self._create_driver()
-                
-            logger.info("Переход на страницу входа...")
-            self.driver.get("https://9111.ru")
-            time.sleep(3)
             
-            # Ищем форму входа
-            login_link = WebDriverWait(self.driver, 10).until(
-                EC.element_to_be_clickable((By.XPATH, "//a[contains(text(), 'Вход') or contains(text(), 'Войти')]"))
+            # 2. Извлекаем CSRF токен
+            csrf_token = self._get_csrf_token(response.text)
+            
+            if not csrf_token:
+                logger.warning("⚠️ CSRF токен не найден, пробуем без него")
+            
+            # 3. Подготавливаем данные для входа
+            login_data = {
+                'login': email,
+                'password': password,
+                'remember': 'on',
+                'submit': 'Войти',
+            }
+            
+            if csrf_token:
+                login_data['csrf_token'] = csrf_token
+            
+            # 4. Отправляем POST запрос
+            login_response = self.session.post(
+                self.LOGIN_URL,
+                data=login_data,
+                allow_redirects=True,
+                timeout=30,
+                headers={
+                    'Referer': self.LOGIN_URL,
+                    'Origin': self.BASE_URL,
+                }
             )
-            login_link.click()
-            time.sleep(2)
             
-            # Заполняем форму
-            email_input = WebDriverWait(self.driver, 10).until(
-                EC.presence_of_element_located((By.NAME, "email"))
-            )
-            email_input.send_keys(self.email)
-            
-            password_input = self.driver.find_element(By.NAME, "password")
-            password_input.send_keys(self.password)
-            
-            # Отправляем форму
-            submit_button = self.driver.find_element(By.XPATH, "//button[@type='submit']")
-            submit_button.click()
-            time.sleep(5)
-            
-            # Проверяем успешность входа
-            if self._check_login_status():
-                logger.info("✅ Успешный вход по логину/паролю")
-                self._save_cookies()
-                return True
+            # 5. Проверяем успешность входа
+            if login_response.status_code in [200, 302]:
+                # Проверяем через профиль
+                profile_response = self.session.get(self.PROFILE_URL, timeout=30)
+                
+                if profile_response.status_code == 200:
+                    # Ищем признаки авторизации
+                    if 'личный кабинет' in profile_response.text.lower() or email in profile_response.text:
+                        logger.info("✅ Вход выполнен успешно")
+                        
+                        # Сохраняем куки для отладки
+                        cookies_dict = self.session.cookies.get_dict()
+                        logger.debug(f"🍪 Получено куки: {list(cookies_dict.keys())}")
+                        
+                        return True
+                    else:
+                        logger.warning("⚠️ Страница профиля загружена, но признаки авторизации не найдены")
+                else:
+                    logger.error(f"❌ Ошибка при проверке профиля: {profile_response.status_code}")
             else:
-                logger.error("❌ Не удалось войти")
-                return False
+                logger.error(f"❌ Ошибка при отправке формы входа: {login_response.status_code}")
                 
+        except requests.exceptions.ProxyError as e:
+            logger.error(f"❌ Ошибка прокси: {e}")
+            if self.proxies:
+                logger.info("🔄 Пробуем без прокси...")
+                self.proxies = None
+                self.session = self._create_session()
+                return self.login(email, password)
+                
+        except requests.exceptions.Timeout:
+            logger.error("❌ Таймаут при подключении")
         except Exception as e:
-            logger.exception(f"Ошибка при входе: {e}")
-            return False
+            logger.exception(f"❌ Неожиданная ошибка: {e}")
+        
+        return False
     
-    def _check_login_status(self) -> bool:
-        """
-        Проверяет, авторизован ли пользователь.
-        """
+    def save_cookies(self, filepath: str = "cookies.pkl"):
+        """Сохраняет куки в файл."""
+        with open(filepath, 'wb') as f:
+            pickle.dump(self.session.cookies, f)
+        logger.info(f"💾 Cookies сохранены в {filepath}")
+    
+    def load_cookies(self, filepath: str = "cookies.pkl") -> bool:
+        """Загружает куки из файла."""
         try:
-            # Проверяем наличие элементов, характерных для авторизованного пользователя
-            # Например, наличие элемента с классом userMenuOpen или ссылки на профиль
-            WebDriverWait(self.driver, 10).until(
-                EC.presence_of_element_located((By.CLASS_NAME, "userMenuOpen"))
-            )
+            with open(filepath, 'rb') as f:
+                self.session.cookies.update(pickle.load(f))
+            logger.info(f"📂 Cookies загружены из {filepath}")
             return True
-        except:
-            try:
-                # Альтернативная проверка
-                current_url = self.driver.current_url
-                if "/my/" in current_url or "/user-" in current_url:
+        except FileNotFoundError:
+            logger.warning(f"⚠️ Файл cookies не найден: {filepath}")
+            return False
+        except Exception as e:
+            logger.error(f"❌ Ошибка загрузки cookies: {e}")
+            return False
+    
+    def get_cookies_json(self) -> str:
+        """Возвращает куки в формате JSON для сохранения в секреты."""
+        cookies_dict = self.session.cookies.get_dict()
+        return json.dumps(cookies_dict)
+    
+    def load_cookies_from_json(self, cookies_json: str):
+        """Загружает куки из JSON строки."""
+        try:
+            cookies_dict = json.loads(cookies_json)
+            self.session.cookies.update(cookies_dict)
+            logger.info(f"📂 Загружено {len(cookies_dict)} cookies из JSON")
+            return True
+        except Exception as e:
+            logger.error(f"❌ Ошибка загрузки cookies из JSON: {e}")
+            return False
+    
+    def is_authenticated(self) -> bool:
+        """Проверяет, авторизована ли сессия."""
+        try:
+            response = self.session.get(self.PROFILE_URL, timeout=10)
+            if response.status_code == 200:
+                # Ищем признаки авторизации
+                if 'личный кабинет' in response.text.lower():
                     return True
-            except:
-                pass
             return False
-    
-    def _save_cookies(self):
-        """Сохраняет куки для последующего использования."""
-        if self.driver:
-            cookies = self.driver.get_cookies()
-            self.cookies_file.parent.mkdir(exist_ok=True)
-            with open(self.cookies_file, "wb") as f:
-                pickle.dump(cookies, f)
-            logger.info(f"Сохранено {len(cookies)} кук")
-    
-    def ensure_login(self) -> bool:
-        """
-        Гарантирует, что мы авторизованы. Сначала пробует куки, затем логин/пароль.
-        """
-        # Пробуем войти по кукам
-        if self.login_with_cookies():
-            return True
-            
-        # Если не получилось, пробуем логин/пароль
-        logger.info("Пробуем войти с логином/паролем...")
-        return self.login_with_credentials()
-    
-    def get_driver(self):
-        """Возвращает драйвер с авторизованной сессией."""
-        return self.driver
-    
-    def close(self):
-        """Закрывает драйвер."""
-        if self.driver:
-            self.driver.quit()
+        except Exception:
+            return False
