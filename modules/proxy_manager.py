@@ -3,7 +3,7 @@
 
 """
 Модуль для управления прокси.
-Улучшенная версия с проверкой HTTPS и поддержки туннелирования.
+Использует ТОЛЬКО файл proxies_russia.txt из репозитория Proctor как источник.
 """
 
 import logging
@@ -13,169 +13,55 @@ import requests
 from typing import List, Tuple, Optional, Dict
 from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
 class ProxyManager:
-    """Класс для управления прокси."""
+    """Класс для управления прокси, использующий только локальный файл."""
     
-    # Расширенный список российских прокси из разных источников
-    RUSSIAN_PROXIES = [
-        # HTTP/HTTPS прокси (проверенные)
-        '46.17.47.48:80',
-        '46.29.162.166:80',
-        '85.198.96.242:3128',
-        '46.47.197.210:3128',
-        '94.181.80.170:80',
-        '94.181.146.80:80',
-        '95.167.22.44:3128',
-        '95.167.22.45:3128',
-        '95.167.22.46:3128',
-        '95.167.22.47:3128',
-        '95.167.22.48:3128',
-        '95.167.22.49:3128',
-        '95.167.22.50:3128',
-        '95.167.22.51:3128',
-        '95.167.22.52:3128',
-        '95.167.22.53:3128',
-        '95.167.22.54:3128',
-        '95.167.22.55:3128',
-        '95.167.22.56:3128',
-        '95.167.22.57:3128',
-        '95.167.22.58:3128',
-        '95.167.22.59:3128',
-        '95.167.22.60:3128',
-        '95.167.22.61:3128',
-        '95.167.22.62:3128',
-        '95.167.22.63:3128',
-        '95.167.22.64:3128',
-        '95.167.22.65:3128',
-        '95.167.22.66:3128',
-        '95.167.22.67:3128',
-        '95.167.22.68:3128',
-        '95.167.22.69:3128',
-        '95.167.22.70:3128',
-        '185.118.67.66:8080',
-        '185.118.67.109:8080',
-        '185.118.67.159:8080',
-        '185.118.67.211:8080',
-        '185.118.67.220:8080',
-        '185.118.67.243:8080',
-        '91.220.163.202:8080',
-        '91.220.163.203:8080',
-        '91.220.163.204:8080',
-        '91.220.163.205:8080',
-        '91.220.163.206:8080',
-        '91.220.163.207:8080',
-        '91.220.163.208:8080',
-        '91.220.163.209:8080',
-        '91.220.163.210:8080',
-        '94.181.44.217:8080',
-        '94.181.44.218:8080',
-        '94.181.44.219:8080',
-        '94.181.44.220:8080',
-        '94.181.44.221:8080',
-        '94.181.44.222:8080',
-        '94.181.44.223:8080',
-        '94.181.44.224:8080',
-        '94.181.44.225:8080',
-        '94.181.44.226:8080',
-        '94.181.44.227:8080',
-        '94.181.44.228:8080',
-        '94.181.44.229:8080',
-        '94.181.44.230:8080',
-        '193.124.176.139:8443',
-        '193.124.176.139:8888',
-        '193.124.176.142:8080',
-        '193.124.176.142:8443',
-        '193.124.176.177:8080',
-        '193.124.176.177:8443',
-        '193.124.176.187:8080',
-        '193.124.176.187:8443',
-        '193.124.176.188:8080',
-        '193.124.176.188:8443',
-        '193.124.176.202:8080',
-        '193.124.176.202:8443',
-        '193.124.176.209:8080',
-        '193.124.176.209:8443',
-        '193.124.176.215:8080',
-        '193.124.176.215:8443',
-        '193.124.176.218:8080',
-        '193.124.176.218:8443',
-        '193.124.176.221:8080',
-        '193.124.176.221:8443',
-        '193.124.176.224:8080',
-        '193.124.176.224:8443',
-        '193.124.176.227:8080',
-        '193.124.176.227:8443',
-        '193.124.176.230:8080',
-        '193.124.176.230:8443',
-    ]
-    
-    # Источники свежих прокси
-    PROXY_SOURCES = [
-        'https://raw.githubusercontent.com/kort0881/telegram-proxy-collector/main/proxy_ru.txt',
-        'https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt',
-        'https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/http.txt',
-        'https://raw.githubusercontent.com/jetkai/proxy-list/main/online-proxies/txt/proxies-http.txt',
-        'https://raw.githubusercontent.com/ya-panel/proxy-list/main/proxy_list_http.txt',
-        'https://raw.githubusercontent.com/mertguvencli/http-proxy-list/main/proxy-list-data.txt',
-        'https://raw.githubusercontent.com/rdavydov/proxy-list/main/proxies_http.txt',
-        'https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt',
-    ]
+    # Путь к файлу с прокси (относительно корня проекта)
+    PROXY_FILE_PATH = "proxies_russia.txt"
     
     def __init__(self):
         self.working_proxies = []
         self.current_proxy = None
     
-    def fetch_fresh_proxies(self, max_per_source: int = 100) -> List[str]:
+    def load_proxies_from_file(self) -> List[str]:
         """
-        Получает свежие прокси из внешних источников.
+        Загружает прокси из локального файла.
         
-        Args:
-            max_per_source: Максимальное количество прокси из каждого источника
-            
         Returns:
-            Список прокси
+            Список прокси или пустой список, если файл не найден
         """
-        fresh_proxies = []
+        proxies = []
         
-        for source in self.PROXY_SOURCES:
-            try:
-                logger.info(f"📡 Загрузка прокси из: {source}")
-                response = requests.get(source, timeout=10)
-                
-                if response.status_code == 200:
-                    lines = response.text.strip().split('\n')
-                    count = 0
-                    
-                    for line in lines[:max_per_source]:
-                        proxy = line.strip()
-                        # Фильтруем только валидные прокси с правильным форматом
-                        if proxy and ':' in proxy and len(proxy.split(':')) == 2:
-                            # Проверяем, что это не приватный IP
-                            ip_parts = proxy.split(':')[0].split('.')
-                            if len(ip_parts) == 4:
-                                first_octet = int(ip_parts[0])
-                                # Исключаем приватные диапазоны
-                                if not (first_octet == 10 or 
-                                       (first_octet == 172 and 16 <= int(ip_parts[1]) <= 31) or
-                                       (first_octet == 192 and ip_parts[1] == '168')):
-                                    fresh_proxies.append(proxy)
-                                    count += 1
-                    
-                    logger.info(f"✅ Загружено {count} прокси из {source}")
-                else:
-                    logger.warning(f"⚠️ Ошибка загрузки из {source}: {response.status_code}")
-                    
-            except Exception as e:
-                logger.warning(f"⚠️ Не удалось загрузить из {source}: {e}")
+        # Проверяем существование файла
+        proxy_file = Path(self.PROXY_FILE_PATH)
         
-        # Убираем дубликаты
-        fresh_proxies = list(set(fresh_proxies))
-        logger.info(f"📊 Всего свежих прокси: {len(fresh_proxies)}")
+        if not proxy_file.exists():
+            logger.error(f"❌ Файл с прокси не найден: {self.PROXY_FILE_PATH}")
+            logger.error("Пожалуйста, убедитесь, что файл proxies_russia.txt существует в корне проекта")
+            return []
         
-        return fresh_proxies
+        try:
+            with open(proxy_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    proxy = line.strip()
+                    # Пропускаем пустые строки и комментарии
+                    if proxy and not proxy.startswith('#'):
+                        # Проверяем базовый формат (ip:port)
+                        if ':' in proxy and len(proxy.split(':')) == 2:
+                            proxies.append(proxy)
+                        else:
+                            logger.warning(f"⚠️ Некорректный формат прокси: {proxy}")
+            
+            logger.info(f"✅ Загружено {len(proxies)} прокси из файла {self.PROXY_FILE_PATH}")
+            return proxies
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка при чтении файла прокси: {e}")
+            return []
     
     def test_proxy_advanced(self, proxy: str) -> Tuple[bool, float, Dict]:
         """
@@ -290,44 +176,41 @@ class ProxyManager:
         
         return overall_success, avg_speed, results
     
-    def find_working_proxy(self, max_attempts: int = 100, target_url: str = "https://9111.ru") -> Optional[str]:
+    def find_working_proxy(self, max_attempts: int = None, target_url: str = "https://9111.ru") -> Optional[str]:
         """
-        Находит рабочий прокси с приоритетом на HTTPS поддержку.
+        Находит рабочий прокси из локального файла.
         
         Args:
-            max_attempts: Максимальное количество попыток
+            max_attempts: Максимальное количество попыток (если None, проверяет все)
             target_url: Целевой URL для тестирования
             
         Returns:
             Рабочий прокси или None
         """
-        logger.info("🔍 Поиск рабочего российского прокси (с проверкой HTTPS)...")
+        logger.info("🔍 Поиск рабочего прокси из локального файла...")
         
-        # Собираем все прокси
-        all_proxies = []
+        # Загружаем прокси из файла
+        all_proxies = self.load_proxies_from_file()
         
-        # 1. Сначала наши проверенные
-        all_proxies.extend(self.RUSSIAN_PROXIES)
+        if not all_proxies:
+            logger.error("❌ Нет прокси для проверки")
+            return None
         
-        # 2. Пробуем загрузить свежие
-        try:
-            fresh_proxies = self.fetch_fresh_proxies(max_per_source=100)
-            all_proxies.extend(fresh_proxies)
-        except Exception as e:
-            logger.warning(f"⚠️ Ошибка загрузки свежих прокси: {e}")
-        
-        # Убираем дубликаты и перемешиваем
-        all_proxies = list(set(all_proxies))
+        # Перемешиваем для случайного выбора
         random.shuffle(all_proxies)
         
         logger.info(f"📋 Всего прокси для проверки: {len(all_proxies)}")
+        
+        # Определяем количество попыток
+        if max_attempts is None or max_attempts > len(all_proxies):
+            max_attempts = len(all_proxies)
         
         working_proxies = []
         tested = 0
         
         for proxy in all_proxies[:max_attempts]:
             tested += 1
-            logger.info(f"🔄 Тест {tested}/{min(max_attempts, len(all_proxies))}: {proxy}")
+            logger.info(f"🔄 Тест {tested}/{max_attempts}: {proxy}")
             
             works, speed, details = self.test_proxy_advanced(proxy)
             
@@ -359,42 +242,11 @@ class ProxyManager:
             best_speed = working_proxies[0][1]
             
             self.current_proxy = best_proxy
-            logger.info(f"🎯 Выбран лучший прокси: {best_proxy} ({best_speed:.2f}с)")
+            logger.info(f"🎯 Выбран лучший прокси из найденных: {best_proxy} ({best_speed:.2f}с)")
             return best_proxy
         
-        logger.error("❌ НЕ НАЙДЕНО РАБОЧИХ ПРОКСИ С HTTPS ПОДДЕРЖКОЙ!")
+        logger.error("❌ НЕ НАЙДЕНО РАБОЧИХ ПРОКСИ!")
         return None
-    
-    def parallel_proxy_check(self, proxies: List[str], max_workers: int = 10) -> List[Tuple[str, float]]:
-        """
-        Параллельная проверка нескольких прокси.
-        
-        Args:
-            proxies: Список прокси для проверки
-            max_workers: Максимальное количество потоков
-            
-        Returns:
-            Список рабочих прокси с их скоростью
-        """
-        working = []
-        
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_proxy = {
-                executor.submit(self.test_proxy_advanced, proxy): proxy 
-                for proxy in proxies
-            }
-            
-            for future in as_completed(future_to_proxy):
-                proxy = future_to_proxy[future]
-                try:
-                    works, speed, details = future.result()
-                    if works:
-                        working.append((proxy, speed))
-                        logger.info(f"✅ {proxy} - {speed:.2f}с")
-                except Exception as e:
-                    logger.debug(f"❌ {proxy} - ошибка: {e}")
-        
-        return sorted(working, key=lambda x: x[1])
     
     def get_proxy_dict(self, proxy: Optional[str] = None) -> Optional[Dict[str, str]]:
         """
