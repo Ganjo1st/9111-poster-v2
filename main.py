@@ -233,20 +233,26 @@ def main():
         auth = AuthClass(Config.NINTH_EMAIL, Config.NINTH_PASSWORD)
         logger.info("✅ Объект авторизации создан")
         
-        # Пробуем войти через login (основной метод)
-        login_result = safe_call_method(auth, 'login')
+        # Проверяем наличие cookies файла
+        cookies_path = safe_get_attr(auth, 'cookies_file', 'sessions/cookies.pkl')
+        logger.info(f"📁 Путь к cookies: {cookies_path}")
+        
+        # Пробуем войти через cookies если файл существует
+        if os.path.exists(cookies_path):
+            logger.info("🍪 Найден файл cookies, пробуем login_with_cookies")
+            login_result = safe_call_method(auth, 'login_with_cookies', cookies_path)
+        else:
+            logger.info("🔐 Файл cookies не найден, пробуем login_with_credentials")
+            # login_with_credentials не принимает аргументы (данные уже в объекте)
+            login_result = safe_call_method(auth, 'login_with_credentials')
         
         if not login_result:
             logger.error("❌ Ошибка авторизации")
             return
         
-        logger.info("✅ Login выполнен успешно")
+        logger.info("✅ Авторизация выполнена успешно")
         
-        # Получаем путь к cookies файлу
-        cookies_path = safe_get_attr(auth, 'cookies_file', 'sessions/cookies.pkl')
-        logger.info(f"📁 Путь к cookies: {cookies_path}")
-        
-        # Создаем сессию из cookies
+        # Создаем сессию из cookies файла
         session = get_session_from_cookies(cookies_path)
         
         if session is None:
