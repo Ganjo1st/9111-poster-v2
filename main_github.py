@@ -31,7 +31,7 @@ def make_title_unique(title: str) -> str:
 
 
 def setup_driver():
-    """Настраивает Chrome driver для headless режима"""
+    """Настраивает Chrome driver для headless режима с прокси"""
     chrome_options = Options()
     
     # Основные аргументы
@@ -41,7 +41,17 @@ def setup_driver():
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--window-size=1920,1080")
     
-    # Реальный User-Agent
+    # Добавляем прокси если есть
+    proxy = os.environ.get('HTTP_PROXY')
+    if proxy:
+        # Убираем http:// из начала если есть
+        proxy_clean = proxy.replace('http://', '').replace('https://', '')
+        chrome_options.add_argument(f'--proxy-server={proxy_clean}')
+        logger.info(f"🔌 Используем прокси: {proxy_clean}")
+    else:
+        logger.info("🔌 Прокси не используется (работаем напрямую)")
+    
+    # Реальный User-Agent как в вашем браузере
     chrome_options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
     
     # Языковые настройки
@@ -52,10 +62,18 @@ def setup_driver():
     chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
     chrome_options.add_experimental_option('useAutomationExtension', False)
     
+    # Дополнительные аргументы для стабильности
+    chrome_options.add_argument("--disable-web-security")
+    chrome_options.add_argument("--allow-running-insecure-content")
+    chrome_options.add_argument("--disable-client-side-phishing-detection")
+    chrome_options.add_argument("--disable-component-update")
+    
     driver = webdriver.Chrome(options=chrome_options)
     
     # Убираем флаг автоматизации
     driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+    driver.execute_script("Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]})")
+    driver.execute_script("Object.defineProperty(navigator, 'languages', {get: () => ['ru-RU', 'ru']})")
     
     return driver
 
@@ -67,6 +85,7 @@ def add_cookies_and_navigate(driver, target_url):
     2. Добавляем куки
     3. Переходим на целевую страницу
     """
+    # Свежие куки из браузера
     cookies = [
         {'name': 'user_hash', 'value': Config.USER_HASH, 'domain': '.9111.ru', 'path': '/'},
         {'name': 'uuk', 'value': 'cad1a52ec9d948e6cc9ef7cae9009203', 'domain': '.9111.ru', 'path': '/'},
@@ -76,8 +95,13 @@ def add_cookies_and_navigate(driver, target_url):
     
     logger.info("=" * 50)
     logger.info("🌐 ШАГ 1: Открываем главную страницу для установки домена...")
-    driver.get("https://9111.ru")
-    time.sleep(3)
+    try:
+        driver.get("https://9111.ru")
+        time.sleep(5)
+        logger.info(f"   Статус: {driver.title}")
+    except Exception as e:
+        logger.error(f"❌ Ошибка при открытии главной: {e}")
+        return False
     
     logger.info("=" * 50)
     logger.info("🍪 ШАГ 2: Добавляем куки...")
@@ -90,8 +114,12 @@ def add_cookies_and_navigate(driver, target_url):
     
     logger.info("=" * 50)
     logger.info(f"🌐 ШАГ 3: Переходим на целевую страницу {target_url}")
-    driver.get(target_url)
-    time.sleep(5)
+    try:
+        driver.get(target_url)
+        time.sleep(5)
+    except Exception as e:
+        logger.error(f"❌ Ошибка при переходе: {e}")
+        return False
     
     current_url = driver.current_url
     page_title = driver.title
@@ -101,7 +129,7 @@ def add_cookies_and_navigate(driver, target_url):
     # Проверяем наличие 403
     if "403" in page_title or "Forbidden" in driver.page_source:
         logger.error("❌ Получена ошибка 403 Forbidden")
-        logger.error("   Возможно IP GitHub Actions заблокирован")
+        logger.error("   Возможно IP заблокирован")
         return False
     
     # Проверяем наличие формы
@@ -238,8 +266,15 @@ def get_telegram_posts():
 
 def main():
     logger.info("=" * 50)
-    logger.info("🚀 Запуск 9111 Poster (Правильная последовательность: главная → куки → цель)")
+    logger.info("🚀 Запуск 9111 Poster (с поддержкой прокси)")
     logger.info("=" * 50)
+    
+    # Показываем информацию о прокси
+    proxy = os.environ.get('HTTP_PROXY')
+    if proxy:
+        logger.info(f"🔌 Прокси настроен: {proxy}")
+    else:
+        logger.info("🔌 Прокси не используется (работаем напрямую)")
 
     # 1. Настраиваем драйвер
     driver = setup_driver()
