@@ -31,32 +31,40 @@ def get_auth_class():
     return None
 
 
+def safe_get_attr(obj, attr_name, default=None):
+    """Безопасно получает атрибут объекта"""
+    if hasattr(obj, attr_name):
+        value = getattr(obj, attr_name)
+        if value is not None:
+            return value
+    return default
+
+
 def create_session_from_auth(auth):
-    """Создает сессию используя user_hash и uuk из объекта auth"""
+    """Создает сессию используя user_hash и uuk"""
     import requests
     
     logger.info("🔄 Создаем сессию из user_hash и uuk")
     
-    # Получаем user_hash и uuk из объекта auth
-    user_hash = None
-    uuk = None
+    # Безопасно получаем user_hash и uuk
+    user_hash = safe_get_attr(auth, 'user_hash')
+    uuk = safe_get_attr(auth, 'uuk')
     
-    if hasattr(auth, 'user_hash'):
-        user_hash = auth.user_hash
+    if user_hash:
         logger.info(f"✅ Найден user_hash в auth: {user_hash[:10]}...")
-    
-    if hasattr(auth, 'uuk'):
-        uuk = auth.uuk
-        logger.info(f"✅ Найден uuk в auth: {uuk[:10]}...")
-    
-    # Если нет в auth, берем из Config
-    if not user_hash:
+    else:
+        logger.warning("⚠️ user_hash не найден в auth")
         user_hash = Config.USER_HASH
-        logger.info(f"✅ Используем user_hash из Config")
+        if user_hash:
+            logger.info(f"✅ Используем user_hash из Config: {user_hash[:10]}...")
     
-    if not uuk:
+    if uuk:
+        logger.info(f"✅ Найден uuk в auth: {uuk[:10]}...")
+    else:
+        logger.warning("⚠️ uuk не найден в auth")
         uuk = Config.UUK
-        logger.info(f"✅ Используем uuk из Config")
+        if uuk:
+            logger.info(f"✅ Используем uuk из Config: {uuk[:10]}...")
     
     if not user_hash or not uuk:
         logger.error("❌ Нет user_hash или uuk")
@@ -90,9 +98,9 @@ def create_session_from_auth(auth):
             logger.warning(f"⚠️ Сессия вернула статус {test_response.status_code}")
             
             # Пробуем добавить куки из cookies_file если есть
-            if hasattr(auth, 'cookies_file') and auth.cookies_file:
-                cookies_path = auth.cookies_file
-                if os.path.exists(cookies_path):
+            cookies_path = safe_get_attr(auth, 'cookies_file', 'sessions/cookies.pkl')
+            if os.path.exists(cookies_path):
+                try:
                     with open(cookies_path, 'rb') as f:
                         cookies = pickle.load(f)
                     for cookie in cookies:
@@ -104,6 +112,8 @@ def create_session_from_auth(auth):
                     if test_response.status_code == 200:
                         logger.info("✅ Сессия работает после добавления cookies")
                         return session
+                except Exception as e:
+                    logger.warning(f"Не удалось загрузить cookies: {e}")
             
             return session  # Все равно возвращаем
     except Exception as e:
@@ -136,7 +146,9 @@ def get_telegram_posts():
                     logger.info(f"✅ Получено {len(posts)} постов через parse_channel_posts()")
                     # Выводим информацию о первом посте
                     if len(posts) > 0:
-                        logger.info(f"📄 Первый пост: {posts[0].get('title', '')[:50]}...")
+                        first_post = posts[0]
+                        title = first_post.get('title', '')[:50]
+                        logger.info(f"📄 Первый пост: {title}...")
                     return posts
                 else:
                     logger.warning("parse_channel_posts() вернул пустой список")
@@ -173,11 +185,19 @@ def main():
                 return
             logger.info("✅ Login выполнен успешно")
         
-        # Проверяем наличие важных атрибутов
-        if hasattr(auth, 'user_hash'):
-            logger.info(f"✅ user_hash: {auth.user_hash[:10]}...")
-        if hasattr(auth, 'uuk'):
-            logger.info(f"✅ uuk: {auth.uuk[:10]}...")
+        # Безопасно проверяем атрибуты
+        user_hash = safe_get_attr(auth, 'user_hash')
+        uuk = safe_get_attr(auth, 'uuk')
+        
+        if user_hash:
+            logger.info(f"✅ user_hash найден: {user_hash[:10]}...")
+        else:
+            logger.warning("⚠️ user_hash отсутствует в auth, используем из Config")
+            
+        if uuk:
+            logger.info(f"✅ uuk найден: {uuk[:10]}...")
+        else:
+            logger.warning("⚠️ uuk отсутствует в auth, используем из Config")
         
         logger.info("✅ Авторизация выполнена")
         
@@ -216,8 +236,8 @@ def main():
     try:
         pub_api = PublicationAPI(
             session=session,
-            user_hash=Config.USER_HASH,
-            uuk=Config.UUK
+            user_hash=Config.USER_HASH,  # Всегда используем из Config
+            uuk=Config.UUK                # Всегда используем из Config
         )
 
         successful = 0
