@@ -3,7 +3,7 @@
 
 """
 Модуль для управления прокси.
-Использует ТОЛЬКО файл proxies_russia.txt из репозитория Proctor как источник.
+Использует только проверенный список из репозитория Proctor.
 """
 
 import logging
@@ -12,55 +12,50 @@ import time
 import requests
 from typing import List, Tuple, Optional, Dict
 from urllib.parse import urlparse
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
 class ProxyManager:
-    """Класс для управления прокси, использующий только локальный файл."""
+    """Класс для управления прокси."""
     
-    # Путь к файлу с прокси (относительно корня проекта)
-    PROXY_FILE_PATH = "proxies_russia.txt"
+    # ЕДИНСТВЕННЫЙ ИСТОЧНИК - проверенные российские прокси
+    PROXY_SOURCE = "https://raw.githubusercontent.com/Ganjo1st/Proctor/main/proxies_russia.txt"
     
     def __init__(self):
         self.working_proxies = []
         self.current_proxy = None
+        self.all_proxies = []
+        self._load_proxies()
     
-    def load_proxies_from_file(self) -> List[str]:
+    def _load_proxies(self) -> List[str]:
         """
-        Загружает прокси из локального файла.
+        Загружает прокси из единственного источника.
         
         Returns:
-            Список прокси или пустой список, если файл не найден
+            Список прокси
         """
-        proxies = []
-        
-        # Проверяем существование файла
-        proxy_file = Path(self.PROXY_FILE_PATH)
-        
-        if not proxy_file.exists():
-            logger.error(f"❌ Файл с прокси не найден: {self.PROXY_FILE_PATH}")
-            logger.error("Пожалуйста, убедитесь, что файл proxies_russia.txt существует в корне проекта")
-            return []
-        
         try:
-            with open(proxy_file, 'r', encoding='utf-8') as f:
-                for line in f:
+            logger.info(f"📡 Загрузка прокси из: {self.PROXY_SOURCE}")
+            response = requests.get(self.PROXY_SOURCE, timeout=10)
+            
+            if response.status_code == 200:
+                lines = response.text.strip().split('\n')
+                self.all_proxies = []
+                
+                for line in lines:
                     proxy = line.strip()
-                    # Пропускаем пустые строки и комментарии
-                    if proxy and not proxy.startswith('#'):
-                        # Проверяем базовый формат (ip:port)
-                        if ':' in proxy and len(proxy.split(':')) == 2:
-                            proxies.append(proxy)
-                        else:
-                            logger.warning(f"⚠️ Некорректный формат прокси: {proxy}")
-            
-            logger.info(f"✅ Загружено {len(proxies)} прокси из файла {self.PROXY_FILE_PATH}")
-            return proxies
-            
+                    # Проверяем формат ip:port
+                    if proxy and ':' in proxy and len(proxy.split(':')) == 2:
+                        self.all_proxies.append(proxy)
+                
+                logger.info(f"✅ Загружено {len(self.all_proxies)} прокси")
+                return self.all_proxies
+            else:
+                logger.error(f"❌ Ошибка загрузки: {response.status_code}")
+                return []
+                
         except Exception as e:
-            logger.error(f"❌ Ошибка при чтении файла прокси: {e}")
+            logger.error(f"❌ Не удалось загрузить прокси: {e}")
             return []
     
     def test_proxy_advanced(self, proxy: str) -> Tuple[bool, float, Dict]:
@@ -145,7 +140,6 @@ class ProxyManager:
             target_time = time.time() - start
             
             if response.status_code in [200, 302, 403]:
-                # 403 тоже считаем успехом - значит прокси работает, но сайт блокирует
                 results['target'] = {
                     'success': True,
                     'time': target_time,
@@ -176,41 +170,37 @@ class ProxyManager:
         
         return overall_success, avg_speed, results
     
-    def find_working_proxy(self, max_attempts: int = None, target_url: str = "https://9111.ru") -> Optional[str]:
+    def find_working_proxy(self, max_attempts: int = None) -> Optional[str]:
         """
-        Находит рабочий прокси из локального файла.
+        Находит рабочий прокси из загруженного списка.
         
         Args:
-            max_attempts: Максимальное количество попыток (если None, проверяет все)
-            target_url: Целевой URL для тестирования
+            max_attempts: Максимальное количество попыток (если None - все прокси)
             
         Returns:
             Рабочий прокси или None
         """
-        logger.info("🔍 Поиск рабочего прокси из локального файла...")
+        logger.info("🔍 Поиск рабочего прокси из загруженного списка...")
         
-        # Загружаем прокси из файла
-        all_proxies = self.load_proxies_from_file()
-        
-        if not all_proxies:
-            logger.error("❌ Нет прокси для проверки")
+        if not self.all_proxies:
+            logger.error("❌ Список прокси пуст")
             return None
         
         # Перемешиваем для случайного выбора
-        random.shuffle(all_proxies)
+        proxies_to_test = self.all_proxies.copy()
+        random.shuffle(proxies_to_test)
         
-        logger.info(f"📋 Всего прокси для проверки: {len(all_proxies)}")
+        if max_attempts:
+            proxies_to_test = proxies_to_test[:max_attempts]
         
-        # Определяем количество попыток
-        if max_attempts is None or max_attempts > len(all_proxies):
-            max_attempts = len(all_proxies)
+        logger.info(f"📋 Будет проверено прокси: {len(proxies_to_test)}")
         
         working_proxies = []
         tested = 0
         
-        for proxy in all_proxies[:max_attempts]:
+        for proxy in proxies_to_test:
             tested += 1
-            logger.info(f"🔄 Тест {tested}/{max_attempts}: {proxy}")
+            logger.info(f"🔄 Тест {tested}/{len(proxies_to_test)}: {proxy}")
             
             works, speed, details = self.test_proxy_advanced(proxy)
             
@@ -242,7 +232,7 @@ class ProxyManager:
             best_speed = working_proxies[0][1]
             
             self.current_proxy = best_proxy
-            logger.info(f"🎯 Выбран лучший прокси из найденных: {best_proxy} ({best_speed:.2f}с)")
+            logger.info(f"🎯 Выбран лучший прокси: {best_proxy} ({best_speed:.2f}с)")
             return best_proxy
         
         logger.error("❌ НЕ НАЙДЕНО РАБОЧИХ ПРОКСИ!")
