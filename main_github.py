@@ -1,342 +1,283 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""
+Основной скрипт для GitHub Actions.
+Использует авторизацию через куки и российские прокси для обхода блокировок.
+"""
+
 import os
 import sys
+import logging
 import time
-import pickle
 import random
-import string
+from datetime import datetime
 from pathlib import Path
-
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service
-from selenium.common.exceptions import TimeoutException, NoSuchElementException
 
 # Добавляем путь к проекту
 sys.path.insert(0, str(Path(__file__).parent))
 
-from modules.config import Config
-from modules.logger import setup_logging
-from modules.telegram_bot_parser import TelegramBotParser
+# Импорты модулей проекта
+from modules.github_actions_auth import Auth9111
+from modules.telegram_bot_parser import TelegramRSSParser
+from modules.publication_api import PublicationAPI
 from modules.rubric_mapper import get_rubric_id
+from modules.config import Config
 
-logger = setup_logging()
+# Настройка логирования
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(f'logs/poster_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log', encoding='utf-8'),
+        logging.StreamHandler(sys.stdout)
+    ]
+)
 
+logger = logging.getLogger('9111_poster')
 
-def make_title_unique(title: str) -> str:
-    """Делает заголовок уникальным на 70%"""
-    return f"{title} {random.randint(1000, 9999)}"
-
-
-def setup_driver():
-    """Настраивает Chrome driver для headless режима с прокси"""
-    chrome_options = Options()
-    
-    # Основные аргументы
-    chrome_options.add_argument("--headless=new")
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("--disable-gpu")
-    chrome_options.add_argument("--window-size=1920,1080")
-    
-    # Добавляем прокси если есть
-    proxy = os.environ.get('HTTP_PROXY')
+def setup_proxy() -> dict:
+    """
+    Настройка прокси для обхода блокировок.
+    Использует переменную окружения PROXY или возвращает None.
+    """
+    proxy = os.environ.get('PROXY')
     if proxy:
-        # Убираем http:// из начала если есть
-        proxy_clean = proxy.replace('http://', '').replace('https://', '')
-        chrome_options.add_argument(f'--proxy-server={proxy_clean}')
-        logger.info(f"🔌 Используем прокси: {proxy_clean}")
-    else:
-        logger.info("🔌 Прокси не используется (работаем напрямую)")
+        logger.info(f"🔌 Настроен прокси: {proxy}")
+        return {
+            'http': f'http://{proxy}',
+            'https': f'http://{proxy}'
+        }
     
-    # Реальный User-Agent как в вашем браузере
-    chrome_options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
-    
-    # Языковые настройки
-    chrome_options.add_argument("--lang=ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")
-    
-    # Скрываем автоматизацию
-    chrome_options.add_argument("--disable-blink-features=AutomationControlled")
-    chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
-    chrome_options.add_experimental_option('useAutomationExtension', False)
-    
-    # Дополнительные аргументы для стабильности
-    chrome_options.add_argument("--disable-web-security")
-    chrome_options.add_argument("--allow-running-insecure-content")
-    chrome_options.add_argument("--disable-client-side-phishing-detection")
-    chrome_options.add_argument("--disable-component-update")
-    
-    driver = webdriver.Chrome(options=chrome_options)
-    
-    # Убираем флаг автоматизации
-    driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-    driver.execute_script("Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]})")
-    driver.execute_script("Object.defineProperty(navigator, 'languages', {get: () => ['ru-RU', 'ru']})")
-    
-    return driver
-
-
-def add_cookies_and_navigate(driver, target_url):
-    """
-    Правильная последовательность:
-    1. Сначала открываем домен (любую страницу)
-    2. Добавляем куки
-    3. Переходим на целевую страницу
-    """
-    # Свежие куки из браузера
-    cookies = [
-        {'name': 'user_hash', 'value': Config.USER_HASH, 'domain': '.9111.ru', 'path': '/'},
-        {'name': 'uuk', 'value': 'cad1a52ec9d948e6cc9ef7cae9009203', 'domain': '.9111.ru', 'path': '/'},
-        {'name': 'geo', 'value': '91-817-1', 'domain': '.9111.ru', 'path': '/'},
-        {'name': 'au', 'value': '%7B%22u%22%3A2368040%2C%22k%22%3A%22aa8ca3729252da5450cdb0862352503d%22%2C%22t%22%3A1773748465%7D', 'domain': '.9111.ru', 'path': '/'},
+    # Пробуем получить прокси из других источников
+    proxy_list = [
+        '46.17.47.48:80',
+        '46.29.162.166:80',
+        '85.198.96.242:3128',
+        '46.47.197.210:3128',
+        '94.181.80.170:80',
+        '94.181.146.80:80',
+        '95.167.22.44:3128',
+        '95.167.22.45:3128',
+        '95.167.22.46:3128',
+        '95.167.22.47:3128',
+        '95.167.22.48:3128',
+        '95.167.22.49:3128',
+        '95.167.22.50:3128',
+        '95.167.22.51:3128',
+        '95.167.22.52:3128',
+        '95.167.22.53:3128',
+        '95.167.22.54:3128',
+        '95.167.22.55:3128',
+        '95.167.22.56:3128',
+        '95.167.22.57:3128',
+        '95.167.22.58:3128',
+        '95.167.22.59:3128',
+        '95.167.22.60:3128',
+        '95.167.22.61:3128',
+        '95.167.22.62:3128',
+        '95.167.22.63:3128',
+        '95.167.22.64:3128',
+        '95.167.22.65:3128',
+        '95.167.22.66:3128',
+        '95.167.22.67:3128',
+        '95.167.22.68:3128',
+        '95.167.22.69:3128',
+        '95.167.22.70:3128'
     ]
     
-    logger.info("=" * 50)
-    logger.info("🌐 ШАГ 1: Открываем главную страницу для установки домена...")
-    try:
-        driver.get("https://9111.ru")
-        time.sleep(5)
-        logger.info(f"   Статус: {driver.title}")
-    except Exception as e:
-        logger.error(f"❌ Ошибка при открытии главной: {e}")
-        return False
+    # Выбираем случайный прокси
+    selected_proxy = random.choice(proxy_list)
+    logger.info(f"🔌 Выбран случайный прокси: {selected_proxy}")
     
-    logger.info("=" * 50)
-    logger.info("🍪 ШАГ 2: Добавляем куки...")
-    for cookie in cookies:
+    return {
+        'http': f'http://{selected_proxy}',
+        'https': f'http://{selected_proxy}'
+    }
+
+def test_proxy(proxies: dict) -> bool:
+    """
+    Тестирует работоспособность прокси.
+    """
+    import requests
+    
+    test_urls = [
+        'http://httpbin.org/ip',
+        'https://api.ipify.org',
+        'http://example.com'
+    ]
+    
+    for url in test_urls:
         try:
-            driver.add_cookie(cookie)
-            logger.info(f"✅ Добавлена кука: {cookie['name']}")
+            response = requests.get(
+                url,
+                proxies=proxies,
+                timeout=10,
+                headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+            )
+            if response.status_code == 200:
+                logger.info(f"✅ Прокси работает (тест URL: {url})")
+                return True
         except Exception as e:
-            logger.warning(f"⚠️ Не удалось добавить куку {cookie['name']}: {e}")
+            logger.debug(f"Прокси не работает с {url}: {e}")
+            continue
     
-    logger.info("=" * 50)
-    logger.info(f"🌐 ШАГ 3: Переходим на целевую страницу {target_url}")
-    try:
-        driver.get(target_url)
-        time.sleep(5)
-    except Exception as e:
-        logger.error(f"❌ Ошибка при переходе: {e}")
-        return False
-    
-    current_url = driver.current_url
-    page_title = driver.title
-    logger.info(f"📍 Текущий URL: {current_url}")
-    logger.info(f"📄 Заголовок страницы: {page_title}")
-    
-    # Проверяем наличие 403
-    if "403" in page_title or "Forbidden" in driver.page_source:
-        logger.error("❌ Получена ошибка 403 Forbidden")
-        logger.error("   Возможно IP заблокирован")
-        return False
-    
-    # Проверяем наличие формы
-    try:
-        form = driver.find_element(By.ID, "form_create_topic_group")
-        logger.info("✅ ФОРМА НАЙДЕНА! Авторизация успешна")
-        return True
-    except:
-        logger.error("❌ Форма не найдена")
-        return False
-
-
-def create_publication(driver, title: str, content: str, rubric_name: str = "новости", tags: str = ""):
-    """Создает публикацию через Selenium"""
-    timestamp = int(time.time())
-    
-    try:
-        # Проверяем наличие формы перед началом
-        try:
-            form = driver.find_element(By.ID, "form_create_topic_group")
-            logger.info("✅ Форма найдена, начинаем заполнение")
-        except:
-            logger.error("❌ Форма не найдена перед заполнением")
-            return False
-        
-        # Вводим заголовок
-        logger.info("➡️ Вводим заголовок...")
-        title_div = WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.ID, "topic_name"))
-        )
-        title_div.click()
-        title_div.clear()
-        title_div.send_keys(title)
-        logger.info(f"   ✅ Заголовок: {title}")
-        time.sleep(2)
-        
-        # Выбираем рубрику
-        logger.info("➡️ Выбираем рубрику...")
-        rubric_select = driver.find_element(By.ID, "rubric_id2")
-        rubric_id = get_rubric_id(rubric_name)
-        driver.execute_script(
-            "arguments[0].value = arguments[1]; arguments[0].dispatchEvent(new Event('change'))",
-            rubric_select,
-            str(rubric_id)
-        )
-        logger.info(f"   ✅ Рубрика: {rubric_name} (ID: {rubric_id})")
-        time.sleep(2)
-        
-        # Вводим текст
-        logger.info("➡️ Вводим текст...")
-        editor = driver.find_element(By.ID, "lite_editor")
-        editor.click()
-        editor.send_keys(content)
-        logger.info(f"   ✅ Текст (длина: {len(content)} символов)")
-        time.sleep(2)
-        
-        # Вводим теги
-        if tags:
-            try:
-                tags_input = driver.find_element(By.ID, "tag_list_input")
-                tags_input.clear()
-                tags_input.send_keys(tags)
-                logger.info(f"   ✅ Теги: {tags}")
-                time.sleep(2)
-            except:
-                logger.warning("   ⚠️ Теги не введены")
-        
-        # Отправляем форму
-        logger.info("➡️ Отправляем форму...")
-        submit_btn = driver.find_element(By.ID, "button_create_pubs")
-        driver.execute_script("arguments[0].scrollIntoView(true);", submit_btn)
-        time.sleep(1)
-        submit_btn.click()
-        time.sleep(5)
-        
-        # Проверяем результат
-        page_source = driver.page_source.lower()
-        
-        if "спасибо" in page_source:
-            logger.info("✅ Публикация успешна! (найдено 'спасибо')")
-            return True
-        elif "публикация успешно" in page_source:
-            logger.info("✅ Публикация успешна! (найдено 'публикация успешно')")
-            return True
-        elif "успешно добавлена" in page_source:
-            logger.info("✅ Публикация успешна! (найдено 'успешно добавлена')")
-            return True
-        elif "опубликована" in page_source:
-            logger.info("✅ Публикация успешна! (найдено 'опубликована')")
-            return True
-        elif "уникален" in page_source:
-            logger.warning("⚠️ Заголовок не уникален")
-            return False
-        else:
-            logger.error("❌ Неизвестный результат")
-            return False
-            
-    except Exception as e:
-        logger.error(f"❌ Ошибка при создании публикации: {e}")
-        return False
-
-
-def get_telegram_posts():
-    """Получает посты из Telegram"""
-    logger.info("🤖 Получаем посты из Telegram...")
-    
-    parser = TelegramBotParser(Config.TELEGRAM_TOKEN, Config.CHANNEL_ID)
-    
-    try:
-        raw_posts = parser.parse_channel_posts()
-        
-        if raw_posts:
-            logger.info(f"📦 Получено {len(raw_posts)} сырых постов")
-            
-            posts = []
-            for raw in raw_posts:
-                if isinstance(raw, dict):
-                    post = {
-                        'title': raw.get('text', '')[:100],
-                        'content': raw.get('text', ''),
-                    }
-                    if post['content']:
-                        posts.append(post)
-                        logger.info(f"  Пост: {post['title'][:30]}...")
-            
-            logger.info(f"✅ Преобразовано {len(posts)} постов")
-            return posts
-        
-    except Exception as e:
-        logger.error(f"❌ Ошибка парсинга Telegram: {e}")
-    
-    return []
-
+    logger.warning("❌ Прокси не прошел тесты")
+    return False
 
 def main():
-    logger.info("=" * 50)
-    logger.info("🚀 Запуск 9111 Poster (с поддержкой прокси)")
-    logger.info("=" * 50)
+    """Основная функция."""
+    logger.info("=" * 60)
+    logger.info("🚀 ЗАПУСК 9111 POSTER (GitHub Actions Edition)")
+    logger.info("=" * 60)
     
-    # Показываем информацию о прокси
-    proxy = os.environ.get('HTTP_PROXY')
-    if proxy:
-        logger.info(f"🔌 Прокси настроен: {proxy}")
+    # Проверяем наличие всех необходимых секретов
+    required_secrets = ['NINTH_EMAIL', 'NINTH_PASSWORD', 'CHANNEL_ID', 
+                        'TELEGRAM_TOKEN', 'USER_HASH', 'UUK']
+    
+    missing_secrets = [s for s in required_secrets if not os.environ.get(s)]
+    
+    if missing_secrets:
+        logger.error(f"❌ Отсутствуют секреты: {', '.join(missing_secrets)}")
+        logger.error("Пожалуйста, добавьте их в настройках репозитория -> Secrets and variables -> Actions")
+        return
+    
+    logger.info("✅ Все секреты найдены")
+    
+    # Настройка прокси
+    proxies = setup_proxy()
+    
+    # Тестируем прокси
+    if not test_proxy(proxies):
+        logger.warning("⚠️ Прокси не работает, пробуем без прокси...")
+        proxies = None
     else:
-        logger.info("🔌 Прокси не используется (работаем напрямую)")
-
-    # 1. Настраиваем драйвер
-    driver = setup_driver()
+        logger.info("✅ Прокси работает корректно")
+    
+    # Инициализация авторизации с прокси
+    auth = Auth9111(proxies=proxies)
+    
+    # Загружаем куки из переменных окружения
+    logger.info("🍪 Загрузка cookies из секретов...")
+    
+    # Здесь нужно добавить код для загрузки куки из секретов
+    # В идеале - сохранить куки в переменную окружения COOKIES_JSON
+    cookies_json = os.environ.get('COOKIES_JSON')
+    if cookies_json:
+        import json
+        try:
+            cookies = json.loads(cookies_json)
+            auth.session.cookies.update(cookies)
+            logger.info(f"✅ Загружено {len(cookies)} cookies")
+        except Exception as e:
+            logger.error(f"❌ Ошибка загрузки cookies: {e}")
+    
+    # Проверяем авторизацию
+    logger.info("🔑 Проверка авторизации...")
+    test_response = auth.session.get('https://9111.ru/my/', proxies=proxies)
+    
+    if test_response.status_code == 200 and 'личный кабинет' in test_response.text.lower():
+        logger.info("✅ Авторизация подтверждена")
+    else:
+        logger.warning("⚠️ Авторизация не подтверждена, выполняем вход...")
+        # Пробуем авторизоваться
+        if not auth.login(os.environ['NINTH_EMAIL'], os.environ['NINTH_PASSWORD']):
+            logger.error("❌ Не удалось авторизоваться")
+            return
+        logger.info("✅ Авторизация выполнена")
+        
+        # Сохраняем куки для следующих запусков
+        cookies_to_save = auth.session.cookies.get_dict()
+        logger.info(f"💾 Cookies сохранены ({len(cookies_to_save)} шт.)")
+        # Здесь можно вывести инструкцию по сохранению куки в секреты
+    
+    # Парсинг Telegram канала
+    logger.info(f"📱 Парсинг Telegram канала: {os.environ['CHANNEL_ID']}")
+    tg_parser = TelegramRSSParser()
     
     try:
-        # 2. Добавляем куки и переходим на целевую страницу
-        target_url = "https://9111.ru/pubs/add/title/"
-        if not add_cookies_and_navigate(driver, target_url):
-            logger.error("❌ Не удалось получить доступ к странице создания")
-            return
+        posts = tg_parser.get_posts(
+            channel_id=os.environ['CHANNEL_ID'],
+            token=os.environ['TELEGRAM_TOKEN'],
+            limit=3
+        )
         
-        # 3. Получаем посты из Telegram
-        posts = get_telegram_posts()
         if not posts:
-            logger.warning("❌ Нет постов для публикации")
+            logger.warning("❌ Не получено постов из Telegram")
             return
         
-        logger.info(f"✅ Получено {len(posts)} постов")
+        logger.info(f"✅ Получено {len(posts)} постов из Telegram")
         
-        # 4. Публикуем каждый пост
-        successful = 0
-        for i, post in enumerate(posts, 1):
-            logger.info("=" * 50)
-            logger.info(f"📝 Пост {i}/{len(posts)}")
-            logger.info("=" * 50)
+        # Выводим первые несколько постов для отладки
+        for i, post in enumerate(posts[:2], 1):
+            logger.info(f"📄 Пост {i}: {post.get('title', 'Без заголовка')[:100]}...")
             
-            title = post.get("title", "").strip()
-            content = post.get("content", "").strip()
-            
-            if not content:
-                logger.warning(f"⚠️ Пост {i} пустой, пропускаем")
-                continue
-            
-            unique_title = make_title_unique(title)
-            logger.info(f"Оригинальный заголовок: {title}")
-            logger.info(f"Уникальный заголовок: {unique_title}")
-            
-            success = create_publication(
-                driver,
-                title=unique_title,
-                content=content,
-                rubric_name=Config.DEFAULT_RUBRIC,
-                tags=Config.DEFAULT_TAGS
-            )
-            
-            if success:
-                successful += 1
-                logger.info(f"✅ Пост {i} успешно опубликован")
-            else:
-                logger.error(f"❌ Ошибка при публикации поста {i}")
-            
-            # Пауза между постами
-            time.sleep(5)
+    except Exception as e:
+        logger.exception(f"❌ Ошибка парсинга Telegram: {e}")
+        return
+    
+    # Инициализация API публикаций
+    pub_api = PublicationAPI(
+        session=auth.session,
+        user_hash=os.environ['USER_HASH'],
+        uuk=os.environ['UUK']
+    )
+    
+    # Публикация каждого поста
+    successful = 0
+    for i, post in enumerate(posts, 1):
+        logger.info("-" * 50)
+        logger.info(f"📝 Обработка поста {i}/{len(posts)}")
+        logger.info("-" * 50)
         
-        logger.info("=" * 50)
-        logger.info(f"📊 ИТОГ: {successful}/{len(posts)} постов опубликовано")
-        logger.info("=" * 50)
+        # Извлекаем данные поста
+        title = post.get('title', '')
+        if not title:
+            # Если нет заголовка, используем первые слова текста
+            content_preview = post.get('content', '')[:100]
+            title = f"Новость: {content_preview[:50]}..."
         
-    finally:
-        driver.quit()
-        logger.info("👋 Драйвер закрыт")
-
+        content = post.get('content', '')
+        image_url = post.get('image_url')
+        
+        logger.info(f"📌 Заголовок: {title[:100]}...")
+        logger.info(f"📏 Длина текста: {len(content)} символов")
+        
+        if image_url:
+            logger.info(f"🖼️ Есть изображение: {image_url[:50]}...")
+        
+        # Создаем публикацию
+        success = pub_api.create_publication(
+            title=title,
+            content=content,
+            rubric_name="новости",
+            tags="новости, закон, право, общество",
+            image_url=image_url  # PublicationAPI должен уметь скачивать по URL
+        )
+        
+        if success:
+            successful += 1
+            logger.info(f"✅ Пост {i} успешно опубликован")
+        else:
+            logger.error(f"❌ Ошибка публикации поста {i}")
+        
+        # Задержка между публикациями
+        if i < len(posts):
+            delay = random.uniform(5, 10)
+            logger.info(f"⏳ Ожидание {delay:.1f} секунд...")
+            time.sleep(delay)
+    
+    # Итоги
+    logger.info("=" * 60)
+    logger.info(f"📊 ИТОГ: {successful}/{len(posts)} постов опубликовано")
+    logger.info(f"📈 Процент успеха: {successful/len(posts)*100:.1f}%")
+    logger.info("=" * 60)
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        logger.info("👋 Программа прервана пользователем")
+    except Exception as e:
+        logger.exception(f"💥 Критическая ошибка: {e}")
+        sys.exit(1)
