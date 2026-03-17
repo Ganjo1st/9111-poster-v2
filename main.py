@@ -6,7 +6,7 @@ from pathlib import Path
 # Добавляем путь к проекту
 sys.path.insert(0, str(Path(__file__).parent))
 
-from modules.github_actions_auth import Auth9111  # <-- ИСПРАВЛЕНО
+from modules.github_actions_auth import GithubActionsAuth as Auth9111  # или Auth, смотрите что там
 from modules.config import Config
 from modules.logger import setup_logging
 from modules.publication_api import PublicationAPI
