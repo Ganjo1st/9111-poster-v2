@@ -1,144 +1,148 @@
-import logging
-import requests
-from typing import List, Dict, Optional
-import tempfile
-from pathlib import Path
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 
-from modules.exceptions import TelegramParseError
-from modules.logger import log_function_call
+"""
+Модуль для парсинга Telegram канала через RSS.
+Использует feedparser для получения постов.
+"""
+
+import logging
+import feedparser
+import re
+from typing import List, Dict, Optional
+from datetime import datetime
+import html
 
 logger = logging.getLogger(__name__)
 
-
-class TelegramBotParser:
-    """
-    Парсер Telegram канала через Bot API.
-    Проще и надежнее, чем telethon, идеально для GitHub Actions.
-    """
+class TelegramRSSParser:
+    """Парсер Telegram канала через RSS."""
     
-    def __init__(self, bot_token: str, channel_id: str):
+    def __init__(self):
+        self.logger = logging.getLogger(f"{__name__}.TelegramRSSParser")
+    
+    def get_posts(self, channel_id: str, token: str = None, limit: int = 5) -> List[Dict]:
         """
-        :param bot_token: Токен бота от @BotFather
-        :param channel_id: ID канала (например, @channel или -1001234567890)
-        """
-        self.bot_token = bot_token
-        self.channel_id = channel_id
-        self.base_url = f"https://api.telegram.org/bot{bot_token}"
+        Получает посты из Telegram канала через RSS.
         
-    def _make_request(self, method: str, params: dict = None) -> dict:
-        """Совершает запрос к Telegram API."""
-        url = f"{self.base_url}/{method}"
+        Args:
+            channel_id: ID канала (например, @channel или https://t.me/channel)
+            token: Не используется, оставлен для совместимости
+            limit: Максимальное количество постов
+            
+        Returns:
+            Список словарей с постами
+        """
+        self.logger.info(f"📱 Получение постов из канала: {channel_id}")
+        
+        # Формируем RSS URL
+        if channel_id.startswith('@'):
+            channel_name = channel_id[1:]
+        elif 't.me/' in channel_id:
+            channel_name = channel_id.split('t.me/')[-1].split('/')[0]
+        else:
+            channel_name = channel_id
+        
+        rss_url = f"https://t.me/s/{channel_name}"
+        self.logger.info(f"📡 RSS URL: {rss_url}")
+        
         try:
-            response = requests.get(url, params=params, timeout=30)
-            response.raise_for_status()
-            data = response.json()
-            if not data.get("ok"):
-                raise TelegramParseError(f"Telegram API error: {data.get('description')}")
-            return data
+            # Парсим RSS
+            feed = feedparser.parse(rss_url)
+            
+            if not feed.entries:
+                self.logger.warning("❌ Нет записей в RSS")
+                return []
+            
+            self.logger.info(f"✅ Найдено {len(feed.entries)} записей")
+            
+            posts = []
+            for entry in feed.entries[:limit]:
+                post = self._parse_entry(entry)
+                if post:
+                    posts.append(post)
+            
+            self.logger.info(f"📄 Получено {len(posts)} постов")
+            return posts
+            
         except Exception as e:
-            logger.error(f"Ошибка запроса к Telegram API: {e}")
-            raise TelegramParseError(f"Failed to call Telegram API: {e}")
+            self.logger.exception(f"❌ Ошибка парсинга RSS: {e}")
+            return []
     
-    @log_function_call
-    def get_updates(self, limit: int = 10, offset: int = None) -> List[Dict]:
-        """Получает последние сообщения."""
-        params = {
-            "timeout": 30,
-            "limit": limit,
-            "allowed_updates": ["message", "channel_post"]
-        }
-        if offset:
-            params["offset"] = offset
-            
-        data = self._make_request("getUpdates", params)
-        return data.get("result", [])
-    
-    @log_function_call
-    def parse_channel_posts(self, limit: int = 5) -> List[Dict]:
+    def _parse_entry(self, entry) -> Optional[Dict]:
         """
-        Парсит последние посты из канала.
-        Возвращает список словарей с текстом и фото.
+        Парсит одну запись RSS.
+        
+        Args:
+            entry: Запись из feedparser
+            
+        Returns:
+            Словарь с данными поста или None
         """
-        posts = []
-        updates = self.get_updates(limit=limit * 2)  # Запрашиваем с запасом
-        
-        temp_dir = Path("temp_media")
-        temp_dir.mkdir(exist_ok=True)
-        
-        for update in updates:
-            # Определяем тип сообщения (канал или обычный чат)
-            message = update.get("channel_post") or update.get("message")
-            if not message:
-                continue
-                
-            # Проверяем, что сообщение из нужного канала
-            chat = message.get("chat")
-            if not chat:
-                continue
-                
-            chat_id = str(chat.get("id"))
-            chat_username = chat.get("username", "")
+        try:
+            # Извлекаем заголовок
+            title = entry.get('title', '')
+            if title:
+                title = html.unescape(title)
             
-            # Проверяем соответствие channel_id
-            target_id = self.channel_id.replace("@", "")
-            if target_id not in chat_id and target_id not in chat_username:
-                continue
+            # Извлекаем содержимое
+            content = ''
+            if hasattr(entry, 'content'):
+                content = entry.content[0].value
+            elif hasattr(entry, 'summary'):
+                content = entry.summary
             
-            post_data = {
-                "text": message.get("text") or message.get("caption") or "",
-                "photo_path": None,
-                "message_id": message.get("message_id"),
-                "date": message.get("date")
+            if content:
+                content = html.unescape(content)
+                # Удаляем HTML теги
+                content = re.sub(r'<[^>]+>', '', content)
+            
+            # Извлекаем ссылку
+            link = entry.get('link', '')
+            
+            # Извлекаем дату
+            published = entry.get('published', '')
+            
+            # Извлекаем изображение
+            image_url = None
+            if hasattr(entry, 'links'):
+                for link in entry.links:
+                    if link.get('type', '').startswith('image/'):
+                        image_url = link.get('href')
+                        break
+            
+            # Если не нашли в links, ищем в content
+            if not image_url and content:
+                img_match = re.search(r'<img[^>]+src="([^"]+)"', content)
+                if img_match:
+                    image_url = img_match.group(1)
+            
+            post = {
+                'title': title,
+                'content': content,
+                'link': link,
+                'published': published,
+                'image_url': image_url
             }
             
-            # Проверяем наличие фото
-            if "photo" in message:
-                # Получаем самое большое фото
-                photos = message["photo"]
-                if photos:
-                    # Берем последнее (самое большое)
-                    file_id = photos[-1]["file_id"]
-                    photo_path = self._download_photo(file_id, temp_dir / f"photo_{post_data['message_id']}.jpg")
-                    if photo_path:
-                        post_data["photo_path"] = str(photo_path)
-                        
-            # Проверяем наличие документа (может быть фото)
-            elif "document" in message:
-                doc = message["document"]
-                mime_type = doc.get("mime_type", "")
-                if mime_type.startswith("image/"):
-                    file_id = doc["file_id"]
-                    photo_path = self._download_photo(file_id, temp_dir / f"doc_{post_data['message_id']}.jpg")
-                    if photo_path:
-                        post_data["photo_path"] = str(photo_path)
-            
-            if post_data["text"] or post_data["photo_path"]:
-                posts.append(post_data)
-                
-            if len(posts) >= limit:
-                break
-                
-        logger.info(f"Найдено {len(posts)} постов в канале")
-        return posts
-    
-    def _download_photo(self, file_id: str, save_path: Path) -> Optional[Path]:
-        """Скачивает фото по file_id."""
-        try:
-            # Получаем информацию о файле
-            file_info = self._make_request("getFile", {"file_id": file_id})
-            file_path = file_info["result"]["file_path"]
-            
-            # Скачиваем файл
-            download_url = f"https://api.telegram.org/file/bot{self.bot_token}/{file_path}"
-            response = requests.get(download_url, timeout=30)
-            response.raise_for_status()
-            
-            with open(save_path, "wb") as f:
-                f.write(response.content)
-                
-            logger.debug(f"Фото сохранено: {save_path}")
-            return save_path
+            self.logger.debug(f"Пост: {title[:50]}...")
+            return post
             
         except Exception as e:
-            logger.error(f"Не удалось скачать фото: {e}")
+            self.logger.exception(f"Ошибка парсинга записи: {e}")
             return None
+    
+    def extract_text_from_html(self, html_text: str) -> str:
+        """Извлекает чистый текст из HTML."""
+        if not html_text:
+            return ''
+        
+        # Удаляем HTML теги
+        text = re.sub(r'<[^>]+>', ' ', html_text)
+        # Удаляем лишние пробелы
+        text = re.sub(r'\s+', ' ', text)
+        return text.strip()
+
+
+# Для обратной совместимости
+TelegramRSSParser = TelegramRSSParser
