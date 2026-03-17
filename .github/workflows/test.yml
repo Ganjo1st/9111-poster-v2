@@ -1,4 +1,4 @@
-name: Test Auth
+name: Test Auth with DPI Bypass
 
 on:
   workflow_dispatch:
@@ -7,20 +7,37 @@ jobs:
   test:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
       
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
       
-      - name: Install Chrome
+      - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y google-chrome-stable
-          google-chrome --version
+          sudo apt-get install -y \
+            google-chrome-stable \
+            git \
+            make \
+            gcc \
+            netfilter-persistent \
+            iptables-persistent
       
-      - name: Install dependencies
+      - name: Setup zapret (DPI bypass)
+        run: |
+          chmod +x ./setup_zapret.sh
+          sudo ./setup_zapret.sh
+      
+      - name: Run zapret in background
+        run: |
+          sudo /usr/local/bin/tpws --port=989 --bind-addr=127.0.0.1 --daemon
+          echo "✅ zapret запущен в фоне"
+          sleep 2
+      
+      - name: Install Python dependencies
         run: |
           pip install selenium
       
@@ -39,3 +56,7 @@ jobs:
         with:
           name: screenshots
           path: "*.png"
+      
+      - name: Stop zapret (cleanup)
+        if: always()
+        run: sudo pkill tpws || true
