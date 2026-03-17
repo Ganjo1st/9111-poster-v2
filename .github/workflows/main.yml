@@ -2,14 +2,14 @@ name: 9111 Poster
 
 on:
   schedule:
-    # Запуск в 10:00 и 18:00 по Москве (UTC+3)
     - cron: '0 7 * * *'   # 10:00 МСК
     - cron: '0 15 * * *'  # 18:00 МСК
-  workflow_dispatch:  # Ручной запуск
+  workflow_dispatch:
 
 jobs:
   post-to-9111:
     runs-on: ubuntu-latest
+    timeout-minutes: 15  # Увеличиваем таймаут
     
     steps:
     - name: Checkout repository
