@@ -29,12 +29,12 @@ class BrowserManager:
         chrome_options.add_argument("--disable-dev-shm-usage")
         chrome_options.add_argument("--window-size=1920,1080")
         
-        # Реальные заголовки браузера для обхода защиты
+        # Реальные заголовки браузера
         chrome_options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         chrome_options.add_argument("--accept-lang=ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")
         chrome_options.add_argument("--accept=text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8")
         
-        # Дополнительные параметры для избегания детекта ботов
+        # Скрываем автоматизацию
         chrome_options.add_argument("--disable-blink-features=AutomationControlled")
         chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
         chrome_options.add_experimental_option('useAutomationExtension', False)
@@ -42,7 +42,7 @@ class BrowserManager:
         self.driver = webdriver.Chrome(options=chrome_options)
         self.wait = WebDriverWait(self.driver, 30)
         
-        # Скрываем следы автоматизации
+        # Дополнительно скрываем webdriver
         self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
         
         logger.info("✅ Браузер запущен")
@@ -71,55 +71,78 @@ class BrowserManager:
         try:
             logger.info("🔑 Вход на сайт...")
             
-            # Сначала заходим на главную
+            # Сначала заходим на главную с паузой
             self.driver.get("https://9111.ru/")
             time.sleep(5)
             self.save_screenshot("1_main_page.png")
             
-            # Проверяем не заблокирован ли доступ
-            if "403" in self.driver.title or "Forbidden" in self.driver.page_source:
-                # Даже если 403, пробуем зайти на страницу логина
-                logger.warning("⚠️ Получен 403, но пробуем зайти на логин")
-            
-            # Переходим на страницу логина
+            # Даже если 403, пробуем зайти на логин
+            logger.info("🌐 Переходим на страницу логина...")
             self.driver.get("https://9111.ru/login/")
             time.sleep(5)
             self.save_screenshot("2_login_page.png")
             
-            # Проверяем наличие формы логина
-            page_source = self.driver.page_source.lower()
-            if "email" in page_source and "password" in page_source:
-                logger.info("✅ Форма логина найдена")
-            else:
-                logger.warning("⚠️ Форма логина не найдена, но пробуем продолжить")
-            
+            # Пробуем найти поля ввода разными способами
             try:
-                # Пробуем найти поля ввода
+                # Способ 1: по name
                 email_input = WebDriverWait(self.driver, 10).until(
                     EC.presence_of_element_located((By.NAME, "email"))
                 )
-                email_input.send_keys(self.email)
-                logger.info("✅ Email введен")
-                
+            except:
+                try:
+                    # Способ 2: по CSS селектору
+                    email_input = self.driver.find_element(By.CSS_SELECTOR, "input[type='email']")
+                except:
+                    try:
+                        # Способ 3: по placeholder
+                        email_input = self.driver.find_element(By.XPATH, "//input[contains(@placeholder, 'mail') or contains(@placeholder, 'логин')]")
+                    except Exception as e:
+                        logger.error(f"❌ Не удалось найти поле email: {e}")
+                        return False
+            
+            email_input.clear()
+            email_input.send_keys(self.email)
+            logger.info("✅ Email введен")
+            time.sleep(1)
+            
+            # Ищем поле пароля
+            try:
                 password_input = self.driver.find_element(By.NAME, "password")
-                password_input.send_keys(self.password)
-                logger.info("✅ Пароль введен")
-                
-                submit = self.driver.find_element(By.XPATH, "//input[@type='submit']")
-                submit.click()
-                
-                time.sleep(5)
-                self.save_screenshot("3_after_login.png")
-                
-                if self.check_authorization():
-                    logger.info("🎉 ВХОД ВЫПОЛНЕН УСПЕШНО!")
-                    return True
-                else:
-                    logger.error("❌ Вход не удался")
+            except:
+                try:
+                    password_input = self.driver.find_element(By.CSS_SELECTOR, "input[type='password']")
+                except Exception as e:
+                    logger.error(f"❌ Не удалось найти поле пароля: {e}")
                     return False
-                    
-            except Exception as e:
-                logger.error(f"❌ Ошибка при заполнении формы: {e}")
+            
+            password_input.clear()
+            password_input.send_keys(self.password)
+            logger.info("✅ Пароль введен")
+            time.sleep(1)
+            
+            # Ищем кнопку входа
+            try:
+                submit = self.driver.find_element(By.XPATH, "//input[@type='submit'] | //button[@type='submit']")
+            except:
+                try:
+                    submit = self.driver.find_element(By.XPATH, "//button[contains(text(), 'Войти') or contains(text(), 'Вход')]")
+                except Exception as e:
+                    logger.error(f"❌ Не удалось найти кнопку входа: {e}")
+                    return False
+            
+            submit.click()
+            logger.info("✅ Кнопка входа нажата")
+            
+            # Ждем результат
+            time.sleep(7)
+            self.save_screenshot("3_after_login.png")
+            
+            # Проверяем авторизацию
+            if self.check_authorization():
+                logger.info("🎉 ВХОД ВЫПОЛНЕН УСПЕШНО!")
+                return True
+            else:
+                logger.error("❌ Вход не удался")
                 return False
                 
         except Exception as e:
