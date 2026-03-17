@@ -59,42 +59,57 @@ def get_session_from_auth(auth):
         logger.info("🔄 Пробуем создать сессию из driver")
         try:
             import requests
-            from selenium.webdriver.common.by import By
             
             session = requests.Session()
-            # Копируем cookies из driver в session
-            for cookie in auth.driver.get_cookies():
+            
+            # Получаем cookies из driver
+            cookies = auth.driver.get_cookies()
+            logger.info(f"Получено {len(cookies)} cookies из driver")
+            
+            # Добавляем cookies в сессию
+            for cookie in cookies:
                 session.cookies.set(cookie['name'], cookie['value'])
             
             # Добавляем стандартные headers
             session.headers.update({
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
                 'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
                 'Accept-Encoding': 'gzip, deflate, br',
                 'Connection': 'keep-alive',
                 'Upgrade-Insecure-Requests': '1',
             })
             
-            logger.info("✅ Сессия создана из cookies driver")
-            return session
+            # Проверяем, работает ли сессия
+            test_response = session.get('https://9111.ru', allow_redirects=True, timeout=10)
+            if test_response.status_code == 200:
+                logger.info("✅ Сессия успешно создана и работает")
+                return session
+            else:
+                logger.warning(f"Сессия создана, но вернула статус {test_response.status_code}")
+                return session  # Все равно возвращаем, может работать
+                
         except Exception as e:
             logger.warning(f"Не удалось создать сессию из driver: {e}")
     
     # Способ 5: загружаем cookies из файла
     if hasattr(auth, 'cookies_file') and auth.cookies_file:
-        logger.info(f"🔄 Пробуем загрузить cookies из {auth.cookies_file}")
+        cookies_path = auth.cookies_file
+        logger.info(f"🔄 Пробуем загрузить cookies из {cookies_path}")
         try:
             import requests
-            with open(auth.cookies_file, 'rb') as f:
-                cookies = pickle.load(f)
-            
-            session = requests.Session()
-            for cookie in cookies:
-                session.cookies.set(cookie['name'], cookie['value'])
-            
-            logger.info("✅ Сессия создана из cookies файла")
-            return session
+            if os.path.exists(cookies_path):
+                with open(cookies_path, 'rb') as f:
+                    cookies = pickle.load(f)
+                
+                session = requests.Session()
+                for cookie in cookies:
+                    session.cookies.set(cookie['name'], cookie['value'])
+                
+                logger.info("✅ Сессия создана из cookies файла")
+                return session
+            else:
+                logger.warning(f"Файл cookies не найден: {cookies_path}")
         except Exception as e:
             logger.warning(f"Не удалось загрузить cookies: {e}")
     
