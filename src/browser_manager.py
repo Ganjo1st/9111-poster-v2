@@ -23,7 +23,6 @@ class BrowserManager:
         if self.headless:
             chrome_options.add_argument("--headless=new")
         
-        # Важные аргументы для стабильной работы
         chrome_options.add_argument("--no-sandbox")
         chrome_options.add_argument("--disable-dev-shm-usage")
         chrome_options.add_argument("--disable-gpu")
@@ -45,24 +44,73 @@ class BrowserManager:
         self.driver.save_screenshot(name)
         logger.info(f"📸 Скриншот: {name}")
     
+    def debug_page_info(self, stage):
+        """Собирает отладочную информацию о странице"""
+        try:
+            logger.info(f"=== ДЕБАГ {stage} ===")
+            logger.info(f"URL: {self.driver.current_url}")
+            logger.info(f"Title: {self.driver.title}")
+            
+            # Сохраняем HTML для анализа (первые 1000 символов)
+            html = self.driver.page_source[:1000]
+            logger.info(f"HTML preview: {html[:500]}")
+            
+            # Проверяем наличие ключевых слов
+            page_text = self.driver.page_source.lower()
+            keywords = {
+                'email': 'email' in page_text,
+                'password': 'password' in page_text,
+                'login': 'login' in page_text or 'вход' in page_text,
+                'register': 'register' in page_text or 'регистрация' in page_text
+            }
+            logger.info(f"Keywords found: {keywords}")
+            
+            return keywords
+        except Exception as e:
+            logger.error(f"Ошибка дебага: {e}")
+            return {}
+    
+    def find_input_fields(self):
+        """Ищет все возможные поля ввода на странице"""
+        try:
+            # Ищем все input поля
+            inputs = self.driver.find_elements(By.TAG_NAME, "input")
+            logger.info(f"Найдено input полей: {len(inputs)}")
+            
+            for i, inp in enumerate(inputs):
+                try:
+                    inp_type = inp.get_attribute("type")
+                    inp_name = inp.get_attribute("name")
+                    inp_id = inp.get_attribute("id")
+                    inp_placeholder = inp.get_attribute("placeholder")
+                    inp_class = inp.get_attribute("class")
+                    
+                    logger.info(f"Input {i}: type={inp_type}, name={inp_name}, id={inp_id}, placeholder={inp_placeholder}, class={inp_class}")
+                except:
+                    pass
+            
+            return inputs
+        except Exception as e:
+            logger.error(f"Ошибка поиска полей: {e}")
+            return []
+    
     def check_authorization(self) -> bool:
-        """Проверка авторизации ТОЛЬКО по содержимому страницы, НЕ ПО URL!"""
+        """Проверка авторизации ТОЛЬКО по содержимому страницы"""
         try:
             page_source = self.driver.page_source
+            logger.info(f"Проверка авторизации: ищем ID {self.user_id}")
             
-            # Проверяем наличие ID пользователя на странице
             if self.user_id in page_source:
-                logger.info(f"✅ Найден ID пользователя {self.user_id} - авторизация подтверждена")
+                logger.info(f"✅ Найден ID пользователя {self.user_id}")
                 return True
             
-            # Проверяем признаки авторизации
             auth_indicators = ['Выход', 'Мои публикации', 'Баланс', 'Профиль']
             for indicator in auth_indicators:
                 if indicator in page_source:
                     logger.info(f"✅ Найден индикатор: '{indicator}'")
                     return True
             
-            logger.warning("⚠️ Признаки авторизации не найдены")
+            logger.warning("❌ Признаки авторизации не найдены")
             return False
             
         except Exception as e:
@@ -70,57 +118,134 @@ class BrowserManager:
             return False
     
     def login(self) -> bool:
-        """Вход на сайт с правильной проверкой"""
+        """Улучшенный вход с детальным логированием"""
         try:
-            logger.info("🔑 Вход на сайт...")
+            logger.info("🔑 Начинаем процесс входа...")
             
-            # Сначала переходим на главную
+            # ШАГ 1: Переход на главную
+            logger.info("Переходим на главную страницу...")
             self.driver.get("https://9111.ru/")
             time.sleep(3)
             self.save_screenshot("1_main_page.png")
+            self.debug_page_info("MAIN_PAGE")
             
-            # Ищем и кликаем по кнопке "Вход"
-            try:
-                login_link = self.driver.find_element(By.XPATH, "//a[contains(text(), 'Вход')]")
-                login_link.click()
+            # ШАГ 2: Поиск ссылки на вход
+            logger.info("Ищем ссылку на вход...")
+            login_links = self.driver.find_elements(By.XPATH, "//a[contains(text(), 'Вход') or contains(text(), 'вход') or contains(@href, 'login')]")
+            logger.info(f"Найдено ссылок на вход: {len(login_links)}")
+            
+            if login_links:
+                login_links[0].click()
+                logger.info("Клик по ссылке входа")
                 time.sleep(3)
-            except:
-                # Если не нашли, пробуем прямой переход
+            else:
+                logger.warning("Ссылка на вход не найдена, пробуем прямой переход")
                 self.driver.get("https://9111.ru/login/")
                 time.sleep(3)
             
             self.save_screenshot("2_login_page.png")
+            self.debug_page_info("LOGIN_PAGE")
             
-            # Ждем поле email
-            email_input = WebDriverWait(self.driver, 10).until(
-                EC.presence_of_element_located((By.NAME, "email"))
-            )
-            email_input.clear()
-            email_input.send_keys(self.email)
+            # ШАГ 3: Анализ полей ввода
+            logger.info("Анализируем поля ввода на странице...")
+            inputs = self.find_input_fields()
+            
+            if len(inputs) < 2:
+                logger.error("Недостаточно полей ввода на странице!")
+                return False
+            
+            # ШАГ 4: Пробуем найти поле email
+            email_field = None
+            password_field = None
+            
+            # Пробуем разные селекторы для email
+            email_selectors = [
+                (By.NAME, "email"),
+                (By.NAME, "login"),
+                (By.NAME, "username"),
+                (By.ID, "email"),
+                (By.ID, "login"),
+                (By.CSS_SELECTOR, "input[type='email']"),
+                (By.XPATH, "//input[@placeholder='Email' or contains(@placeholder, 'email')]"),
+                (By.XPATH, "//input[@placeholder='Логин' or contains(@placeholder, 'логин')]"),
+                (By.XPATH, "//input[@placeholder='Телефон' or contains(@placeholder, 'телефон')]")
+            ]
+            
+            for selector_type, selector_value in email_selectors:
+                try:
+                    elements = self.driver.find_elements(selector_type, selector_value)
+                    if elements:
+                        email_field = elements[0]
+                        logger.info(f"✅ Нашли поле email по селектору: {selector_type}={selector_value}")
+                        break
+                except:
+                    continue
+            
+            # Пробуем найти поле пароля
+            password_selectors = [
+                (By.NAME, "password"),
+                (By.NAME, "pass"),
+                (By.ID, "password"),
+                (By.ID, "pass"),
+                (By.CSS_SELECTOR, "input[type='password']")
+            ]
+            
+            for selector_type, selector_value in password_selectors:
+                try:
+                    elements = self.driver.find_elements(selector_type, selector_value)
+                    if elements:
+                        password_field = elements[0]
+                        logger.info(f"✅ Нашли поле пароля по селектору: {selector_type}={selector_value}")
+                        break
+                except:
+                    continue
+            
+            if not email_field or not password_field:
+                logger.error("❌ Не удалось найти поля для ввода!")
+                logger.error(f"Email field found: {bool(email_field)}")
+                logger.error(f"Password field found: {bool(password_field)}")
+                return False
+            
+            # ШАГ 5: Ввод данных
+            email_field.clear()
+            email_field.send_keys(self.email)
             logger.info("✅ Email введен")
             
-            # Ждем поле пароля
-            password_input = WebDriverWait(self.driver, 10).until(
-                EC.presence_of_element_located((By.NAME, "password"))
-            )
-            password_input.clear()
-            password_input.send_keys(self.password)
+            password_field.clear()
+            password_field.send_keys(self.password)
             logger.info("✅ Пароль введен")
             
-            # Нажимаем кнопку входа
-            submit = self.driver.find_element(By.XPATH, "//input[@type='submit']")
-            submit.click()
+            # ШАГ 6: Поиск кнопки отправки
+            logger.info("Ищем кнопку отправки...")
+            submit_buttons = self.driver.find_elements(By.XPATH, 
+                "//input[@type='submit'] | //button[@type='submit'] | //button[contains(text(), 'Войти')] | //button[contains(text(), 'Вход')]")
+            
+            if not submit_buttons:
+                logger.error("❌ Не найдена кнопка отправки!")
+                return False
+            
+            logger.info(f"Найдено кнопок: {len(submit_buttons)}")
+            submit_buttons[0].click()
             logger.info("✅ Кнопка входа нажата")
             
-            # Ждем загрузки
+            # ШАГ 7: Ожидание результата
             time.sleep(5)
             self.save_screenshot("3_after_login.png")
+            self.debug_page_info("AFTER_LOGIN")
             
-            # ВАЖНО: Проверяем авторизацию по содержимому, НЕ ПО URL!
+            # ШАГ 8: Проверка авторизации
             if self.check_authorization():
-                logger.info("🎉 Вход выполнен успешно!")
+                logger.info("🎉 ВХОД ВЫПОЛНЕН УСПЕШНО!")
                 return True
             else:
+                # Проверяем, не появилась ли ошибка на странице
+                page_text = self.driver.page_source.lower()
+                error_indicators = ['ошибк', 'error', 'неверн', 'invalid', 'неправильн']
+                for error in error_indicators:
+                    if error in page_text:
+                        logger.error(f"❌ Обнаружено сообщение об ошибке: '{error}'")
+                        break
+                
                 logger.error("❌ Не удалось подтвердить вход")
                 return False
                 
