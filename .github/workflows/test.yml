@@ -26,10 +26,16 @@ jobs:
           chmod +x ./setup_zapret.sh
           sudo ./setup_zapret.sh
       
-      - name: Run nfqws (kernel-level DPI bypass)
+      - name: Create fake TLS data
         run: |
-          # Запускаем nfqws с правильными параметрами для v70
-          sudo /usr/local/bin/nfqws --daemon --qnum=989 --dpi-desync=fake,split --dpi-desync-fake-tls=/dev/null --dpi-desync-split-pos=2
+          # Создаем пустой файл для fake TLS
+          touch /tmp/fake_tls.bin
+          echo "✅ Создан файл для fake TLS"
+      
+      - name: Run nfqws
+        run: |
+          # Запускаем nfqws с правильными параметрами
+          sudo /usr/local/bin/nfqws --daemon --qnum=989 --dpi-desync=fake,split --dpi-desync-fake-tls=/tmp/fake_tls.bin --dpi-desync-split-pos=2
           echo "✅ nfqws запущен"
           sleep 3
           ps aux | grep nfqws
