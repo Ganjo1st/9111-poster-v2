@@ -12,7 +12,6 @@ from modules.config import Config
 from modules.logger import setup_logging
 from modules.publication_api import PublicationAPI
 from modules.rubric_mapper import get_rubric_id
-import os  # Добавьте эту строку, если её нет
 
 # Настройка логирования
 logger = setup_logging()
@@ -35,13 +34,35 @@ def create_session_from_secrets():
     
     session = requests.Session()
     
-    # Устанавливаем куки
-    session.cookies.set('user_hash', user_hash, domain='.9111.ru')
-    session.cookies.set('uuk', uuk, domain='.9111.ru')
+    # Устанавливаем все возможные куки как в браузере
+    cookies = {
+        'user_hash': user_hash,
+        'uuk': uuk,
+        'PHPSESSID': '',  # Будет получена при первом запросе
+        '_ym_uid': '',    # Будет получена
+        '_ym_d': '',      # Будет получена
+        '_ym_isad': '2',
+        'tmr_lvid': '',
+        'tmr_lvidTS': '',
+    }
+    
+    for name, value in cookies.items():
+        if value:  # Только если есть значение
+            session.cookies.set(name, value, domain='.9111.ru')
     
     # Заголовки как в браузере
     session.headers.update({
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'none',
+        'Sec-Fetch-User': '?1',
+        'Cache-Control': 'max-age=0',
     })
     
     return session
@@ -122,7 +143,23 @@ def main():
         logger.error("❌ Не удалось создать сессию")
         return
 
-    # 2. Получаем посты
+    # 2. Проверяем доступ к сайту
+    logger.info("🔍 Проверяем доступ к сайту...")
+    try:
+        response = session.get('https://9111.ru', timeout=30, allow_redirects=True)
+        logger.info(f"Главная страница: {response.status_code}")
+        
+        # Проверяем, авторизованы ли мы
+        if 'user_hash' in response.text:
+            logger.info("✅ Похоже, мы авторизованы (найден user_hash в ответе)")
+        else:
+            logger.warning("⚠️ Возможно, не авторизованы")
+            
+    except Exception as e:
+        logger.error(f"❌ Ошибка при проверке доступа: {e}")
+        return
+
+    # 3. Получаем посты
     posts = get_telegram_posts()
     if not posts:
         logger.warning("❌ Нет постов")
@@ -130,7 +167,7 @@ def main():
 
     logger.info(f"✅ Получено {len(posts)} постов")
 
-    # 3. Публикуем
+    # 4. Публикуем
     pub_api = PublicationAPI(
         session=session,
         user_hash=Config.USER_HASH,
@@ -174,7 +211,7 @@ def main():
         else:
             logger.error(f"❌ Ошибка поста {i}")
 
-    # 4. Очищаем временные файлы
+    # 5. Очищаем временные файлы
     for temp_file in temp_files:
         try:
             os.remove(temp_file)
