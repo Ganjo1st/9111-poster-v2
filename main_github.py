@@ -3,7 +3,7 @@
 
 """
 Основной скрипт для GitHub Actions.
-ФИНАЛЬНАЯ СТРАТЕГИЯ: прокси с первого запроса!
+Использует только прокси из проверенного источника.
 """
 
 import os
@@ -41,8 +41,8 @@ logger = logging.getLogger('9111_poster')
 def main():
     """Основная функция."""
     logger.info("=" * 60)
-    logger.info("🚀 ЗАПУСК 9111 POSTER (ФИНАЛЬНАЯ ВЕРСИЯ)")
-    logger.info("📋 Стратегия: прокси -> куки -> авторизация -> публикация")
+    logger.info("🚀 ЗАПУСК 9111 POSTER")
+    logger.info("📋 Стратегия: проверенные прокси -> куки -> авторизация -> публикация")
     logger.info("=" * 60)
     
     # Проверяем наличие всех необходимых секретов
@@ -76,22 +76,19 @@ def main():
     
     logger.info(f"🍪 Загруженные куки: {list(cookies.keys())}")
     
-    # ШАГ 2: Поиск рабочего российского прокси с поддержкой HTTPS
+    # ШАГ 2: Поиск рабочего прокси из проверенного источника
     logger.info("=" * 60)
-    logger.info("🔌 ШАГ 2: Поиск рабочего российского прокси (с HTTPS)")
+    logger.info("🔌 ШАГ 2: Поиск рабочего прокси")
     logger.info("=" * 60)
     
     proxy_manager = ProxyManager()
     
-    # Ищем прокси специально для 9111.ru
-    working_proxy = proxy_manager.find_working_proxy(
-        max_attempts=100,  # Увеличили до 100 попыток
-        target_url="https://9111.ru"
-    )
+    # Ищем рабочий прокси
+    working_proxy = proxy_manager.find_working_proxy(max_attempts=None)  # Проверяем все
     
     if not working_proxy:
-        logger.error("❌ КРИТИЧЕСКАЯ ОШИБКА: Не найден рабочий российский прокси с HTTPS")
-        logger.error("Без HTTPS прокси сайт блокирует все запросы. Завершаем работу.")
+        logger.error("❌ НЕ НАЙДЕНО РАБОЧИХ ПРОКСИ!")
+        logger.error("Проверьте список прокси в репозитории Proctor")
         return
     
     logger.info(f"✅ Найден рабочий прокси: {working_proxy}")
@@ -130,7 +127,7 @@ def main():
         new_cookies = auth.session.cookies.get_dict()
         logger.info(f"💾 Получены новые куки ({len(new_cookies)} шт.)")
     
-    # ШАГ 5: Парсинг Telegram (без прокси - это отдельно)
+    # ШАГ 5: Парсинг Telegram (без прокси)
     logger.info("=" * 60)
     logger.info("📱 ШАГ 5: Парсинг Telegram канала")
     logger.info("=" * 60)
