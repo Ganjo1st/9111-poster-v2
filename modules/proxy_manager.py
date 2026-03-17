@@ -3,7 +3,7 @@
 
 """
 Модуль для управления прокси.
-Поиск, тестирование и выбор рабочих российских прокси.
+Улучшенная версия с проверкой HTTPS и поддержки туннелирования.
 """
 
 import logging
@@ -12,14 +12,16 @@ import time
 import requests
 from typing import List, Tuple, Optional, Dict
 from urllib.parse import urlparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 logger = logging.getLogger(__name__)
 
 class ProxyManager:
     """Класс для управления прокси."""
     
-    # Расширенный список российских прокси
+    # Расширенный список российских прокси из разных источников
     RUSSIAN_PROXIES = [
+        # HTTP/HTTPS прокси (проверенные)
         '46.17.47.48:80',
         '46.29.162.166:80',
         '85.198.96.242:3128',
@@ -82,6 +84,32 @@ class ProxyManager:
         '94.181.44.228:8080',
         '94.181.44.229:8080',
         '94.181.44.230:8080',
+        '193.124.176.139:8443',
+        '193.124.176.139:8888',
+        '193.124.176.142:8080',
+        '193.124.176.142:8443',
+        '193.124.176.177:8080',
+        '193.124.176.177:8443',
+        '193.124.176.187:8080',
+        '193.124.176.187:8443',
+        '193.124.176.188:8080',
+        '193.124.176.188:8443',
+        '193.124.176.202:8080',
+        '193.124.176.202:8443',
+        '193.124.176.209:8080',
+        '193.124.176.209:8443',
+        '193.124.176.215:8080',
+        '193.124.176.215:8443',
+        '193.124.176.218:8080',
+        '193.124.176.218:8443',
+        '193.124.176.221:8080',
+        '193.124.176.221:8443',
+        '193.124.176.224:8080',
+        '193.124.176.224:8443',
+        '193.124.176.227:8080',
+        '193.124.176.227:8443',
+        '193.124.176.230:8080',
+        '193.124.176.230:8443',
     ]
     
     # Источники свежих прокси
@@ -89,15 +117,18 @@ class ProxyManager:
         'https://raw.githubusercontent.com/kort0881/telegram-proxy-collector/main/proxy_ru.txt',
         'https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt',
         'https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/http.txt',
-        'https://raw.githubusercontent.com/roosterkid/openproxylist/main/HTTP_RAW.txt',
         'https://raw.githubusercontent.com/jetkai/proxy-list/main/online-proxies/txt/proxies-http.txt',
+        'https://raw.githubusercontent.com/ya-panel/proxy-list/main/proxy_list_http.txt',
+        'https://raw.githubusercontent.com/mertguvencli/http-proxy-list/main/proxy-list-data.txt',
+        'https://raw.githubusercontent.com/rdavydov/proxy-list/main/proxies_http.txt',
+        'https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt',
     ]
     
     def __init__(self):
         self.working_proxies = []
         self.current_proxy = None
     
-    def fetch_fresh_proxies(self, max_per_source: int = 50) -> List[str]:
+    def fetch_fresh_proxies(self, max_per_source: int = 100) -> List[str]:
         """
         Получает свежие прокси из внешних источников.
         
@@ -120,10 +151,18 @@ class ProxyManager:
                     
                     for line in lines[:max_per_source]:
                         proxy = line.strip()
-                        # Фильтруем только валидные прокси
+                        # Фильтруем только валидные прокси с правильным форматом
                         if proxy and ':' in proxy and len(proxy.split(':')) == 2:
-                            fresh_proxies.append(proxy)
-                            count += 1
+                            # Проверяем, что это не приватный IP
+                            ip_parts = proxy.split(':')[0].split('.')
+                            if len(ip_parts) == 4:
+                                first_octet = int(ip_parts[0])
+                                # Исключаем приватные диапазоны
+                                if not (first_octet == 10 or 
+                                       (first_octet == 172 and 16 <= int(ip_parts[1]) <= 31) or
+                                       (first_octet == 192 and ip_parts[1] == '168')):
+                                    fresh_proxies.append(proxy)
+                                    count += 1
                     
                     logger.info(f"✅ Загружено {count} прокси из {source}")
                 else:
@@ -138,124 +177,122 @@ class ProxyManager:
         
         return fresh_proxies
     
-    def test_proxy(self, proxy: str, test_url: str = "https://9111.ru", timeout: int = 10) -> Tuple[bool, float]:
+    def test_proxy_advanced(self, proxy: str) -> Tuple[bool, float, Dict]:
         """
-        Тестирует работоспособность прокси.
+        Продвинутое тестирование прокси с проверкой HTTPS и скорости.
         
         Args:
             proxy: Прокси в формате ip:port
-            test_url: URL для тестирования
-            timeout: Таймаут в секундах
             
         Returns:
-            (работает_ли, скорость_в_секундах)
+            (работает_ли, скорость_в_секундах, детали)
         """
         proxies = {
             'http': f'http://{proxy}',
             'https': f'http://{proxy}'
         }
         
-        test_urls = [
-            test_url,
-            "http://httpbin.org/ip",
-            "https://api.ipify.org",
-            "http://example.com"
-        ]
+        results = {}
         
-        for url in test_urls:
-            try:
-                start_time = time.time()
-                response = requests.get(
-                    url,
-                    proxies=proxies,
-                    timeout=timeout,
-                    headers={
-                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-                    }
-                )
-                elapsed = time.time() - start_time
-                
-                if response.status_code == 200:
-                    logger.debug(f"  ✅ {url} - {elapsed:.2f}с")
-                    
-                    # Для тестового URL проверяем IP
-                    if url == "http://httpbin.org/ip" and elapsed < timeout:
-                        return True, elapsed
-                else:
-                    logger.debug(f"  ❌ {url} - {response.status_code}")
-                    
-            except requests.exceptions.ConnectTimeout:
-                logger.debug(f"  ⏰ Таймаут: {url}")
-            except requests.exceptions.ProxyError as e:
-                logger.debug(f"  🔌 Ошибка прокси: {e}")
-            except Exception as e:
-                logger.debug(f"  ❌ Ошибка: {e}")
-        
-        return False, float('inf')
-    
-    def find_working_proxy(self, max_attempts: int = 50, target_url: str = "https://9111.ru") -> Optional[str]:
-        """
-        Находит рабочий прокси для целевого сайта.
-        
-        Args:
-            max_attempts: Максимальное количество попыток
-            target_url: Целевой URL для тестирования
-            
-        Returns:
-            Рабочий прокси или None
-        """
-        logger.info("🔍 Поиск рабочего российского прокси...")
-        
-        # Сначала пробуем свежие прокси из внешних источников
+        # Тест 1: HTTP подключение
         try:
-            fresh_proxies = self.fetch_fresh_proxies()
-            all_proxies = list(set(fresh_proxies + self.RUSSIAN_PROXIES))
-        except:
-            all_proxies = self.RUSSIAN_PROXIES.copy()
-        
-        # Перемешиваем для случайного выбора
-        random.shuffle(all_proxies)
-        
-        logger.info(f"📋 Всего прокси для проверки: {len(all_proxies)}")
-        
-        tested = 0
-        working_proxies = []
-        
-        for proxy in all_proxies[:max_attempts * 2]:
-            tested += 1
-            logger.info(f"🔄 Тест {tested}/{min(max_attempts * 2, len(all_proxies))}: {proxy}")
+            start = time.time()
+            response = requests.get(
+                'http://httpbin.org/ip',
+                proxies=proxies,
+                timeout=10,
+                headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+            )
+            http_time = time.time() - start
             
-            works, speed = self.test_proxy(proxy, test_url=target_url)
-            
-            if works:
-                working_proxies.append((proxy, speed))
-                logger.info(f"  ✅ РАБОТАЕТ! Скорость: {speed:.2f}с")
-                
-                # Если нашли достаточно быстрый прокси, возвращаем
-                if speed < 5.0:
-                    self.current_proxy = proxy
-                    logger.info(f"🎯 Выбран быстрый прокси: {proxy} ({speed:.2f}с)")
-                    return proxy
-            
-            if tested >= max_attempts and working_proxies:
-                break
+            if response.status_code == 200:
+                results['http'] = {
+                    'success': True,
+                    'time': http_time,
+                    'ip': response.json().get('origin', 'unknown')
+                }
+                logger.debug(f"  ✅ HTTP: {http_time:.2f}с, IP: {results['http']['ip']}")
+            else:
+                results['http'] = {'success': False, 'code': response.status_code}
+        except Exception as e:
+            results['http'] = {'success': False, 'error': str(e)}
         
-        if working_proxies:
-            # Сортируем по скорости и выбираем самый быстрый
-            working_proxies.sort(key=lambda x: x[1])
-            best_proxy = working_proxies[0][0]
-            best_speed = working_proxies[0][1]
+        # Тест 2: HTTPS подключение (критично для 9111.ru)
+        try:
+            start = time.time()
+            response = requests.get(
+                'https://httpbin.org/ip',
+                proxies=proxies,
+                timeout=15,
+                headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'},
+                verify=True
+            )
+            https_time = time.time() - start
             
-            self.current_proxy = best_proxy
-            logger.info(f"🎯 Выбран лучший прокси: {best_proxy} ({best_speed:.2f}с)")
-            return best_proxy
+            if response.status_code == 200:
+                results['https'] = {
+                    'success': True,
+                    'time': https_time,
+                    'ip': response.json().get('origin', 'unknown')
+                }
+                logger.debug(f"  ✅ HTTPS: {https_time:.2f}с, IP: {results['https']['ip']}")
+            else:
+                results['https'] = {'success': False, 'code': response.status_code}
+        except requests.exceptions.ProxyError as e:
+            if 'Tunnel connection failed' in str(e):
+                results['https'] = {'success': False, 'error': 'Tunnel failed - proxy does not support HTTPS'}
+            else:
+                results['https'] = {'success': False, 'error': str(e)}
+        except Exception as e:
+            results['https'] = {'success': False, 'error': str(e)}
         
-        logger.warning("❌ Рабочих прокси не найдено")
-        return None
+        # Тест 3: Проверка на target URL (9111.ru)
+        try:
+            start = time.time()
+            response = requests.get(
+                'https://9111.ru',
+                proxies=proxies,
+                timeout=15,
+                headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'},
+                allow_redirects=True
+            )
+            target_time = time.time() - start
+            
+            if response.status_code in [200, 302, 403]:
+                # 403 тоже считаем успехом - значит прокси работает, но сайт блокирует
+                results['target'] = {
+                    'success': True,
+                    'time': target_time,
+                    'code': response.status_code
+                }
+                logger.debug(f"  ✅ Target (9111.ru): {target_time:.2f}с, код: {response.status_code}")
+            else:
+                results['target'] = {'success': False, 'code': response.status_code}
+        except Exception as e:
+            results['target'] = {'success': False, 'error': str(e)}
+        
+        # Определяем общий успех - нужно, чтобы работал HTTPS
+        overall_success = (
+            results.get('http', {}).get('success', False) and 
+            results.get('https', {}).get('success', False)
+        )
+        
+        # Берем среднюю скорость
+        avg_speed = float('inf')
+        if overall_success:
+            speeds = []
+            if 'http' in results and results['http'].get('success'):
+                speeds.append(results['http']['time'])
+            if 'https' in results and results['https'].get('success'):
+                speeds.append(results['https']['time'])
+            if speeds:
+                avg_speed = sum(speeds) / len(speeds)
+        
+        return overall_success, avg_speed, results
     
-    def find_working_proxy_aggressive(self, max_attempts: int = 100, target_url: str = "https://9111.ru") -> Optional[str]:
+    def find_working_proxy(self, max_attempts: int = 100, target_url: str = "https://9111.ru") -> Optional[str]:
         """
-        Агрессивный поиск рабочего прокси с множественными попытками.
+        Находит рабочий прокси с приоритетом на HTTPS поддержку.
         
         Args:
             max_attempts: Максимальное количество попыток
@@ -264,9 +301,9 @@ class ProxyManager:
         Returns:
             Рабочий прокси или None
         """
-        logger.info("🔍 АГРЕССИВНЫЙ поиск рабочего российского прокси...")
+        logger.info("🔍 Поиск рабочего российского прокси (с проверкой HTTPS)...")
         
-        # Пробуем разные источники
+        # Собираем все прокси
         all_proxies = []
         
         # 1. Сначала наши проверенные
@@ -276,69 +313,88 @@ class ProxyManager:
         try:
             fresh_proxies = self.fetch_fresh_proxies(max_per_source=100)
             all_proxies.extend(fresh_proxies)
-        except:
-            pass
+        except Exception as e:
+            logger.warning(f"⚠️ Ошибка загрузки свежих прокси: {e}")
         
-        # Убираем дубликаты
+        # Убираем дубликаты и перемешиваем
         all_proxies = list(set(all_proxies))
         random.shuffle(all_proxies)
         
         logger.info(f"📋 Всего прокси для проверки: {len(all_proxies)}")
         
-        # Тестируем с разными таймаутами
-        for timeout in [5, 10, 15]:
-            logger.info(f"⏱️ Тестирование с таймаутом {timeout}с...")
-            
-            tested = 0
-            working = []
-            
-            for proxy in all_proxies[:max_attempts]:
-                tested += 1
-                logger.info(f"🔄 Тест {tested}/{min(max_attempts, len(all_proxies))}: {proxy}")
-                
-                proxies_dict = {
-                    'http': f'http://{proxy}',
-                    'https': f'http://{proxy}'
-                }
-                
-                try:
-                    start = time.time()
-                    response = requests.get(
-                        target_url,
-                        proxies=proxies_dict,
-                        timeout=timeout,
-                        headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'},
-                        allow_redirects=True
-                    )
-                    elapsed = time.time() - start
-                    
-                    if response.status_code == 200:
-                        logger.info(f"  ✅ РАБОТАЕТ! Код: {response.status_code}, время: {elapsed:.2f}с")
-                        working.append((proxy, elapsed))
-                        
-                        # Если нашли быстрый, сразу возвращаем
-                        if elapsed < 3.0:
-                            self.current_proxy = proxy
-                            logger.info(f"🎯 Найден быстрый прокси: {proxy} ({elapsed:.2f}с)")
-                            return proxy
-                    else:
-                        logger.info(f"  ❌ Код ответа: {response.status_code}")
-                        
-                except Exception as e:
-                    logger.debug(f"  ❌ Ошибка: {type(e).__name__}")
-            
-            if working:
-                # Сортируем по скорости
-                working.sort(key=lambda x: x[1])
-                best_proxy = working[0][0]
-                best_speed = working[0][1]
-                
-                self.current_proxy = best_proxy
-                logger.info(f"🎯 Выбран лучший прокси: {best_proxy} ({best_speed:.2f}с)")
-                return best_proxy
+        working_proxies = []
+        tested = 0
         
-        logger.error("❌ НЕ НАЙДЕНО РАБОЧИХ ПРОКСИ!")
+        for proxy in all_proxies[:max_attempts]:
+            tested += 1
+            logger.info(f"🔄 Тест {tested}/{min(max_attempts, len(all_proxies))}: {proxy}")
+            
+            works, speed, details = self.test_proxy_advanced(proxy)
+            
+            if works:
+                working_proxies.append((proxy, speed, details))
+                logger.info(f"  ✅ РАБОТАЕТ! Скорость: {speed:.2f}с")
+                logger.info(f"     HTTP: {details.get('http', {}).get('time', 0):.2f}с, "
+                           f"HTTPS: {details.get('https', {}).get('time', 0):.2f}с")
+                
+                # Если нашли быстрый прокси с HTTPS, возвращаем сразу
+                if speed < 3.0:
+                    self.current_proxy = proxy
+                    logger.info(f"🎯 Выбран быстрый прокси: {proxy} ({speed:.2f}с)")
+                    return proxy
+            else:
+                # Логируем причину отказа
+                if 'https' in details and not details['https'].get('success'):
+                    if 'Tunnel failed' in str(details['https'].get('error', '')):
+                        logger.info(f"  ❌ HTTPS не поддерживается (туннелирование)")
+                    else:
+                        logger.info(f"  ❌ HTTPS ошибка: {details['https'].get('error', 'unknown')}")
+                elif 'http' in details and not details['http'].get('success'):
+                    logger.info(f"  ❌ HTTP ошибка")
+        
+        if working_proxies:
+            # Сортируем по скорости и выбираем лучший
+            working_proxies.sort(key=lambda x: x[1])
+            best_proxy = working_proxies[0][0]
+            best_speed = working_proxies[0][1]
+            
+            self.current_proxy = best_proxy
+            logger.info(f"🎯 Выбран лучший прокси: {best_proxy} ({best_speed:.2f}с)")
+            return best_proxy
+        
+        logger.error("❌ НЕ НАЙДЕНО РАБОЧИХ ПРОКСИ С HTTPS ПОДДЕРЖКОЙ!")
         return None
+    
+    def parallel_proxy_check(self, proxies: List[str], max_workers: int = 10) -> List[Tuple[str, float]]:
+        """
+        Параллельная проверка нескольких прокси.
+        
+        Args:
+            proxies: Список прокси для проверки
+            max_workers: Максимальное количество потоков
+            
+        Returns:
+            Список рабочих прокси с их скоростью
+        """
+        working = []
+        
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_proxy = {
+                executor.submit(self.test_proxy_advanced, proxy): proxy 
+                for proxy in proxies
+            }
+            
+            for future in as_completed(future_to_proxy):
+                proxy = future_to_proxy[future]
+                try:
+                    works, speed, details = future.result()
+                    if works:
+                        working.append((proxy, speed))
+                        logger.info(f"✅ {proxy} - {speed:.2f}с")
+                except Exception as e:
+                    logger.debug(f"❌ {proxy} - ошибка: {e}")
+        
+        return sorted(working, key=lambda x: x[1])
     
     def get_proxy_dict(self, proxy: Optional[str] = None) -> Optional[Dict[str, str]]:
         """
