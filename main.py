@@ -44,30 +44,30 @@ def safe_call_method(obj, method_name, *args, **kwargs):
     """Безопасно вызывает метод объекта"""
     if hasattr(obj, method_name) and callable(getattr(obj, method_name)):
         try:
-            return getattr(obj, method_name)(*args, **kwargs)
+            logger.info(f"📞 Вызываем {method_name}...")
+            result = getattr(obj, method_name)(*args, **kwargs)
+            logger.info(f"✅ {method_name} выполнен")
+            return result
         except Exception as e:
             logger.warning(f"Ошибка при вызове {method_name}: {e}")
     return None
 
 
-def get_session_from_driver(driver):
-    """Создает сессию из Selenium driver"""
+def get_session_from_cookies(cookies_path):
+    """Создает сессию из cookies файла"""
     import requests
     
-    logger.info("🔄 Создаем сессию из Selenium driver")
+    logger.info(f"🔄 Загружаем cookies из {cookies_path}")
+    
+    if not os.path.exists(cookies_path):
+        logger.error(f"❌ Файл cookies не найден: {cookies_path}")
+        return None
     
     try:
-        # Получаем cookies из driver
-        cookies = driver.get_cookies()
-        logger.info(f"📦 Получено {len(cookies)} cookies из driver")
+        with open(cookies_path, 'rb') as f:
+            cookies = pickle.load(f)
         
-        if not cookies:
-            logger.error("❌ Driver не вернул cookies")
-            return None
-        
-        # Показываем первые несколько cookies для отладки
-        for i, cookie in enumerate(cookies[:3]):
-            logger.info(f"  Cookie {i+1}: {cookie.get('name')}={cookie.get('value', '')[:20]}...")
+        logger.info(f"✅ Загружено {len(cookies)} cookies")
         
         session = requests.Session()
         
@@ -78,6 +78,7 @@ def get_session_from_driver(driver):
                 cookie['value'],
                 domain=cookie.get('domain', '.9111.ru')
             )
+            logger.debug(f"  Cookie: {cookie['name']}={cookie['value'][:20]}...")
         
         # Добавляем стандартные headers
         session.headers.update({
@@ -93,14 +94,14 @@ def get_session_from_driver(driver):
         logger.info(f"🌐 Тестовый запрос вернул статус: {test_response.status_code}")
         
         if test_response.status_code == 200:
-            logger.info("✅ Сессия успешно создана из driver")
+            logger.info("✅ Сессия успешно создана из cookies")
             return session
         else:
             logger.warning(f"⚠️ Сессия вернула статус {test_response.status_code}")
             return session  # Все равно возвращаем
             
     except Exception as e:
-        logger.error(f"❌ Ошибка при создании сессии из driver: {e}")
+        logger.error(f"❌ Ошибка при загрузке cookies: {e}")
         import traceback
         logger.error(traceback.format_exc())
         return None
@@ -228,51 +229,35 @@ def main():
     try:
         auth = AuthClass(Config.NINTH_EMAIL, Config.NINTH_PASSWORD)
         
-        if hasattr(auth, 'login'):
-            logger.info("🔐 Выполняем login...")
-            login_result = auth.login()
-            if not login_result:
-                logger.error("❌ Ошибка авторизации")
-                return
-            logger.info("✅ Login выполнен успешно")
+        # Пробуем войти через cookies если есть
+        cookies_path = safe_get_attr(auth, 'cookies_file', 'sessions/cookies.pkl')
+        if os.path.exists(cookies_path):
+            logger.info(f"🍪 Найден файл cookies: {cookies_path}")
+            login_result = safe_call_method(auth, 'login_with_cookies', cookies_path)
+            if login_result:
+                logger.info("✅ Вход через cookies выполнен")
+            else:
+                logger.warning("⚠️ Вход через cookies не удался, пробуем login_with_credentials")
+                login_result = safe_call_method(auth, 'login_with_credentials', Config.NINTH_EMAIL, Config.NINTH_PASSWORD)
+        else:
+            logger.info("🔐 Файл cookies не найден, выполняем login_with_credentials")
+            login_result = safe_call_method(auth, 'login_with_credentials', Config.NINTH_EMAIL, Config.NINTH_PASSWORD)
         
-        # Пробуем разные способы получить driver
-        driver = None
-        
-        # Способ 1: прямой атрибут driver
-        driver = safe_get_attr(auth, 'driver')
-        if driver:
-            logger.info("✅ Найден driver через атрибут")
-        
-        # Способ 2: вызов метода get_driver()
-        if not driver:
-            driver = safe_call_method(auth, 'get_driver')
-            if driver:
-                logger.info("✅ Получен driver через get_driver()")
-        
-        if not driver:
-            logger.error("❌ Не удалось получить driver")
-            # Выводим доступные атрибуты для отладки
-            logger.info("Доступные атрибуты auth:")
-            for attr in dir(auth):
-                if not attr.startswith('_'):
-                    logger.info(f"  - {attr}")
+        if not login_result:
+            logger.error("❌ Ошибка авторизации")
             return
         
-        logger.info(f"🚗 Driver получен: {driver}")
+        logger.info("✅ Login выполнен успешно")
         
-        # Проверяем текущий URL
-        try:
-            current_url = driver.current_url
-            logger.info(f"🌐 Текущий URL driver: {current_url}")
-        except Exception as e:
-            logger.warning(f"⚠️ Не удалось получить текущий URL: {e}")
+        # Получаем путь к cookies файлу (должен создаться после входа)
+        cookies_path = safe_get_attr(auth, 'cookies_file', 'sessions/cookies.pkl')
+        logger.info(f"📁 Путь к cookies: {cookies_path}")
         
-        # Создаем сессию из driver
-        session = get_session_from_driver(driver)
+        # Создаем сессию из cookies
+        session = get_session_from_cookies(cookies_path)
         
         if session is None:
-            logger.error("❌ Не удалось создать сессию из driver")
+            logger.error("❌ Не удалось создать сессию из cookies")
             return
         
         logger.info("✅ Сессия создана успешно")
