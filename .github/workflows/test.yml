@@ -1,4 +1,4 @@
-name: Test Auth with GoodbyeDPI
+name: Test Auth with zapret
 
 on:
   workflow_dispatch:
@@ -23,22 +23,34 @@ jobs:
             git \
             make \
             gcc \
-            libpcap-dev
+            autoconf \
+            libtool \
+            libnetfilter-queue-dev \
+            libnfnetlink-dev \
+            libmnl-dev \
+            libcap-dev
       
-      - name: Setup GoodbyeDPI
+      - name: Setup zapret
         run: |
-          chmod +x ./setup_nodpi.sh
-          ./setup_nodpi.sh
+          chmod +x ./setup_zapret.sh
+          sudo ./setup_zapret.sh
       
-      - name: Run GoodbyeDPI in background
+      - name: Run zapret in aggressive mode
         run: |
-          cd /tmp/NoDPI
-          # Запускаем с параметрами для обхода блокировок
-          sudo ./goodbyedpi -9 --dns-addr 8.8.8.8 --dns-port 53 &
-          echo "✅ GoodbyeDPI запущен в фоне"
-          sleep 5
-          # Проверяем что процесс запущен
-          ps aux | grep goodbyedpi
+          # Запускаем с самыми агрессивными настройками для обхода блокировок
+          sudo /usr/local/bin/tpws --port=989 --bind-addr=127.0.0.1 --split-http --split-tls --disorder --oob --daemon
+          echo "✅ zapret запущен"
+          sleep 3
+          ps aux | grep tpws
+      
+      - name: Test connection
+        run: |
+          echo "Проверяем доступ к сайту..."
+          curl -I https://9111.ru || echo "Сайт недоступен напрямую"
+          
+          # Проверяем через tpws (работает как прокси)
+          echo "Проверяем через tpws прокси..."
+          curl -I https://9111.ru --proxy 127.0.0.1:989 || echo "Через прокси тоже не работает"
       
       - name: Install Python dependencies
         run: |
@@ -47,16 +59,15 @@ jobs:
       - name: Create screenshots dir
         run: mkdir -p screenshots
       
-      - name: Test connection without proxy
-        run: |
-          echo "Проверяем доступ к сайту..."
-          curl -I https://9111.ru || echo "Сайт недоступен"
-      
       - name: Run test
         env:
           NINTH_EMAIL: ${{ secrets.NINTH_EMAIL }}
           NINTH_PASSWORD: ${{ secrets.NINTH_PASSWORD }}
-        run: python src/poster.py
+          http_proxy: http://127.0.0.1:989
+          https_proxy: http://127.0.0.1:989
+        run: |
+          # Chrome не всегда уважает переменные окружения, поэтому настроим явно
+          python src/poster.py
       
       - name: Upload screenshots
         if: always()
@@ -68,4 +79,4 @@ jobs:
       - name: Cleanup
         if: always()
         run: |
-          sudo pkill goodbyedpi || true
+          sudo pkill tpws || true
