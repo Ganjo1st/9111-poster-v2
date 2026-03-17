@@ -12,8 +12,8 @@ def download_image_from_url(self, image_url: str) -> Optional[str]:
         return None
     
     import tempfile
-    import requests
     from urllib.parse import urlparse
+    from pathlib import Path
     
     logger.info(f"📥 Скачивание изображения: {image_url[:50]}...")
     
@@ -24,7 +24,7 @@ def download_image_from_url(self, image_url: str) -> Optional[str]:
         
         # Генерируем имя файла
         ext = os.path.splitext(urlparse(image_url).path)[1]
-        if not ext:
+        if not ext or ext not in ['.jpg', '.jpeg', '.png', '.gif', '.webp']:
             ext = '.jpg'
         
         filename = f"image_{int(time.time())}_{random.randint(1000, 9999)}{ext}"
@@ -34,7 +34,10 @@ def download_image_from_url(self, image_url: str) -> Optional[str]:
         response = self.session.get(
             image_url,
             timeout=30,
-            stream=True
+            stream=True,
+            headers={
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            }
         )
         
         if response.status_code == 200:
