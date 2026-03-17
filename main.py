@@ -41,87 +41,6 @@ def safe_get_attr(obj, attr_name, default=None):
     return default
 
 
-def create_session_from_auth(auth):
-    """Создает сессию используя user_hash и uuk"""
-    import requests
-    
-    logger.info("🔄 Создаем сессию из user_hash и uuk")
-    
-    # Безопасно получаем user_hash и uuk
-    user_hash = safe_get_attr(auth, 'user_hash')
-    uuk = safe_get_attr(auth, 'uuk')
-    
-    if user_hash:
-        logger.info(f"✅ Найден user_hash в auth: {user_hash[:10]}...")
-    else:
-        logger.warning("⚠️ user_hash не найден в auth")
-        user_hash = Config.USER_HASH
-        if user_hash:
-            logger.info(f"✅ Используем user_hash из Config: {user_hash[:10]}...")
-    
-    if uuk:
-        logger.info(f"✅ Найден uuk в auth: {uuk[:10]}...")
-    else:
-        logger.warning("⚠️ uuk не найден в auth")
-        uuk = Config.UUK
-        if uuk:
-            logger.info(f"✅ Используем uuk из Config: {uuk[:10]}...")
-    
-    if not user_hash or not uuk:
-        logger.error("❌ Нет user_hash или uuk")
-        return None
-    
-    # Создаем сессию
-    session = requests.Session()
-    
-    # Добавляем стандартные headers
-    session.headers.update({
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-        'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
-        'Connection': 'keep-alive',
-        'Upgrade-Insecure-Requests': '1',
-    })
-    
-    # Пытаемся установить cookies с user_hash и uuk
-    session.cookies.set('user_hash', user_hash, domain='.9111.ru')
-    session.cookies.set('uuk', uuk, domain='.9111.ru')
-    
-    # Проверяем сессию
-    try:
-        test_response = session.get('https://9111.ru', allow_redirects=True, timeout=10)
-        logger.info(f"🌐 Тестовый запрос вернул статус: {test_response.status_code}")
-        
-        if test_response.status_code == 200:
-            logger.info("✅ Сессия успешно создана")
-            return session
-        else:
-            logger.warning(f"⚠️ Сессия вернула статус {test_response.status_code}")
-            
-            # Пробуем добавить куки из cookies_file если есть
-            cookies_path = safe_get_attr(auth, 'cookies_file', 'sessions/cookies.pkl')
-            if os.path.exists(cookies_path):
-                try:
-                    with open(cookies_path, 'rb') as f:
-                        cookies = pickle.load(f)
-                    for cookie in cookies:
-                        session.cookies.set(cookie['name'], cookie['value'])
-                    logger.info("✅ Добавлены cookies из файла")
-                    
-                    # Проверяем снова
-                    test_response = session.get('https://9111.ru', allow_redirects=True, timeout=10)
-                    if test_response.status_code == 200:
-                        logger.info("✅ Сессия работает после добавления cookies")
-                        return session
-                except Exception as e:
-                    logger.warning(f"Не удалось загрузить cookies: {e}")
-            
-            return session  # Все равно возвращаем
-    except Exception as e:
-        logger.warning(f"Ошибка при проверке сессии: {e}")
-        return session  # Возвращаем даже если проверка не удалась
-
-
 def get_telegram_posts():
     """Получает посты из Telegram и преобразует в нужный формат"""
     logger.info("🤖 Попытка получить посты из Telegram...")
@@ -157,14 +76,14 @@ def get_telegram_posts():
                         
                         # Если это словарь, показываем ключи
                         if isinstance(first_raw, dict):
-                            logger.info(f"   Ключи: {list(first_raw.keys())}")
+                            logger.info(f"    Ключи: {list(first_raw.keys())}")
                             # Пробуем найти текст
                             for key in ['text', 'message', 'content', 'caption', 'title']:
                                 if key in first_raw and first_raw[key]:
-                                    logger.info(f"   {key}: {first_raw[key][:100]}...")
+                                    logger.info(f"    {key}: {first_raw[key][:100]}...")
                         else:
                             # Если это не словарь, показываем само значение
-                            logger.info(f"   Значение: {str(first_raw)[:200]}")
+                            logger.info(f"    Значение: {str(first_raw)[:200]}")
                     
                     # Преобразуем в единый формат
                     posts = []
@@ -212,8 +131,8 @@ def get_telegram_posts():
                     if posts and len(posts) > 0:
                         first_post = posts[0]
                         logger.info(f"📄 Преобразованный первый пост:")
-                        logger.info(f"   Заголовок: {first_post.get('title', '')[:100]}")
-                        logger.info(f"   Контент: {first_post.get('content', '')[:100]}...")
+                        logger.info(f"    Заголовок: {first_post.get('title', '')[:100]}")
+                        logger.info(f"    Контент: {first_post.get('content', '')[:100]}...")
                     
                     return posts
                 else:
@@ -244,7 +163,7 @@ def main():
         logger.error("❌ Не удалось найти класс авторизации")
         return
 
-    # 2. Авторизация
+    # 2. Авторизация - ИСПОЛЬЗУЕМ РЕАЛЬНУЮ СЕССИЮ
     try:
         auth = AuthClass(Config.NINTH_EMAIL, Config.NINTH_PASSWORD)
         
@@ -256,30 +175,44 @@ def main():
                 return
             logger.info("✅ Login выполнен успешно")
         
-        # Безопасно проверяем атрибуты
-        user_hash = safe_get_attr(auth, 'user_hash')
-        uuk = safe_get_attr(auth, 'uuk')
+        # Получаем сессию из объекта auth
+        session = None
         
-        if user_hash:
-            logger.info(f"✅ user_hash найден: {user_hash[:10]}...")
-        else:
-            logger.warning("⚠️ user_hash отсутствует в auth, используем из Config")
-            
-        if uuk:
-            logger.info(f"✅ uuk найден: {uuk[:10]}...")
-        else:
-            logger.warning("⚠️ uuk отсутствует в auth, используем из Config")
-        
-        logger.info("✅ Авторизация выполнена")
-        
-        # Создаем сессию
-        session = create_session_from_auth(auth)
+        # Пробуем разные способы получить сессию
+        if hasattr(auth, 'session') and auth.session:
+            session = auth.session
+            logger.info("✅ Найдена session в auth")
+        elif hasattr(auth, '_session') and auth._session:
+            session = auth._session
+            logger.info("✅ Найдена _session в auth")
+        elif hasattr(auth, 'get_session') and callable(auth.get_session):
+            try:
+                session = auth.get_session()
+                logger.info("✅ Получена session через get_session()")
+            except:
+                pass
         
         if session is None:
-            logger.error("❌ Не удалось создать сессию")
+            logger.error("❌ Не удалось получить session из объекта auth")
+            # Выводим доступные атрибуты для отладки
+            logger.info("Доступные атрибуты auth:")
+            for attr in dir(auth):
+                if not attr.startswith('_'):
+                    logger.info(f"  - {attr}")
             return
-            
-        logger.info("✅ Сессия создана успешно")
+        
+        # Проверяем сессию
+        try:
+            test_response = session.get('https://9111.ru', allow_redirects=True, timeout=10)
+            logger.info(f"🌐 Тестовая сессия вернула статус: {test_response.status_code}")
+            if test_response.status_code == 200:
+                logger.info("✅ Сессия работает!")
+            else:
+                logger.warning(f"⚠️ Сессия вернула статус {test_response.status_code}")
+        except Exception as e:
+            logger.warning(f"⚠️ Ошибка при проверке сессии: {e}")
+        
+        logger.info("✅ Авторизация выполнена, сессия получена")
         
     except Exception as e:
         logger.error(f"❌ Ошибка при авторизации: {e}")
@@ -296,11 +229,11 @@ def main():
 
     logger.info(f"✅ Получено {len(posts)} постов")
 
-    # 4. Публикация
+    # 4. Публикация - ИСПОЛЬЗУЕМ РЕАЛЬНУЮ СЕССИЮ
     try:
         pub_api = PublicationAPI(
-            session=session,
-            user_hash=Config.USER_HASH,
+            session=session,  # Используем реальную сессию из auth
+            user_hash=Config.USER_HASH,  # На всякий случай передаем
             uuk=Config.UUK
         )
 
