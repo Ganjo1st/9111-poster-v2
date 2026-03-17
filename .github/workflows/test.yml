@@ -1,4 +1,4 @@
-name: Test Auth with NoDPI
+name: Test Auth with GoodbyeDPI
 
 on:
   workflow_dispatch:
@@ -21,23 +21,24 @@ jobs:
           sudo apt-get install -y \
             google-chrome-stable \
             git \
-            python3 \
-            python3-pip
+            make \
+            gcc \
+            libpcap-dev
       
-      - name: Setup NoDPI
+      - name: Setup GoodbyeDPI
         run: |
           chmod +x ./setup_nodpi.sh
           ./setup_nodpi.sh
       
-      - name: Run NoDPI in background
+      - name: Run GoodbyeDPI in background
         run: |
           cd /tmp/NoDPI
-          # Запускаем NoDPI с черным списком
-          python3 nodpi.py --blacklist ${{ github.workspace }}/blacklist.txt &
-          echo "✅ NoDPI запущен в фоне"
-          sleep 3
+          # Запускаем с параметрами для обхода блокировок
+          sudo ./goodbyedpi -9 --dns-addr 8.8.8.8 --dns-port 53 &
+          echo "✅ GoodbyeDPI запущен в фоне"
+          sleep 5
           # Проверяем что процесс запущен
-          ps aux | grep nodpi
+          ps aux | grep goodbyedpi
       
       - name: Install Python dependencies
         run: |
@@ -46,29 +47,16 @@ jobs:
       - name: Create screenshots dir
         run: mkdir -p screenshots
       
-      - name: Configure system to use NoDPI proxy
+      - name: Test connection without proxy
         run: |
-          # Настраиваем системный прокси для HTTP/HTTPS
-          echo "export http_proxy=http://127.0.0.1:8881" >> ~/.bashrc
-          echo "export https_proxy=http://127.0.0.1:8881" >> ~/.bashrc
-          source ~/.bashrc
-          
-          # Альтернативно, настраиваем через environment для текущего шага
-          echo "http_proxy=http://127.0.0.1:8881" >> $GITHUB_ENV
-          echo "https_proxy=http://127.0.0.1:8881" >> $GITHUB_ENV
-          echo "✅ Прокси настроен"
+          echo "Проверяем доступ к сайту..."
+          curl -I https://9111.ru || echo "Сайт недоступен"
       
       - name: Run test
         env:
           NINTH_EMAIL: ${{ secrets.NINTH_EMAIL }}
           NINTH_PASSWORD: ${{ secrets.NINTH_PASSWORD }}
-          http_proxy: http://127.0.0.1:8881
-          https_proxy: http://127.0.0.1:8881
-        run: |
-          # Проверяем что прокси работает
-          curl -I https://9111.ru --proxy http://127.0.0.1:8881 || true
-          # Запускаем тест
-          python src/poster.py
+        run: python src/poster.py
       
       - name: Upload screenshots
         if: always()
@@ -80,4 +68,4 @@ jobs:
       - name: Cleanup
         if: always()
         run: |
-          pkill -f nodpi.py || true
+          sudo pkill goodbyedpi || true
