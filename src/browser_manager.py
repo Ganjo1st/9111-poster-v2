@@ -2,9 +2,14 @@
 # -*- coding: utf-8 -*-
 
 from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.action_chains import ActionChains
 import time
 import logging
+import os
 
 logger = logging.getLogger('browser_manager')
 
@@ -15,6 +20,7 @@ class BrowserManager:
         self.user_id = user_id
         self.headless = headless
         self.driver = None
+        self.wait = None
     
     def start(self):
         chrome_options = Options()
@@ -27,6 +33,7 @@ class BrowserManager:
         chrome_options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         
         self.driver = webdriver.Chrome(options=chrome_options)
+        self.wait = WebDriverWait(self.driver, 30)
         logger.info("✅ Браузер запущен")
         return True
     
@@ -95,15 +102,13 @@ class BrowserManager:
                     logger.info(f"✅ Найден индикатор авторизации: '{indicator}'")
                     return True
             
-            # 3. Проверяем куки в браузере (те, что установились)
+            # 3. Проверяем куки в браузере
             cookies = self.driver.get_cookies()
             cookie_names = [c['name'] for c in cookies]
             logger.info(f"📊 Куки в браузере после установки: {cookie_names}")
             
-            # Проверяем наличие ключевых кук
             if 'user_hash' in cookie_names and 'uuk' in cookie_names:
                 logger.info("✅ Ключевые куки присутствуют в браузере")
-                # Если куки есть, но ID не найден, возможно, страница не та
                 return True
             
             return False
@@ -117,30 +122,120 @@ class BrowserManager:
         try:
             logger.info("🔑 Начинаем процесс 'входа' через куки...")
             
-            # Устанавливаем ВСЕ куки
             self.set_all_cookies()
-            self.save_screenshot("1_after_all_cookies.png")
+            self.save_screenshot("1_after_cookies.png")
             
-            # Проверяем авторизацию
             if self.check_authorization_deep():
                 logger.info("🎉 УСПЕХ! Авторизация по кукам сработала.")
-                
-                # Дополнительно проверяем, что мы действительно на сайте
                 current_url = self.driver.current_url
                 logger.info(f"📍 Текущий URL: {current_url}")
-                
                 return True
             else:
                 logger.error("❌ Не удалось подтвердить авторизацию по кукам.")
-                
-                # Сохраняем HTML для анализа
-                with open("page_source.html", "w", encoding="utf-8") as f:
-                    f.write(self.driver.page_source)
-                logger.info("💾 Сохранен HTML страницы для анализа")
-                
                 return False
                 
         except Exception as e:
             logger.error(f"❌ Ошибка при установке кук: {e}")
             self.save_screenshot("error.png")
+            return False
+    
+    def publish_post(self, title: str, content: str) -> bool:
+        """Публикует пост на 9111.ru"""
+        try:
+            logger.info(f"📝 Начинаем публикацию: {title[:50]}...")
+            
+            actions = ActionChains(self.driver)
+            
+            # Открываем страницу публикации
+            self.driver.get("https://9111.ru/pubs/add/title/")
+            time.sleep(5)
+            self.save_screenshot("2_publish_page.png")
+            
+            # Заголовок
+            title_input = self.wait.until(EC.presence_of_element_located(
+                (By.CSS_SELECTOR, "div[name='topic_name']")
+            ))
+            title_input.click()
+            self.driver.execute_script(
+                "arguments[0].innerText = arguments[1];", 
+                title_input, 
+                title[:150]
+            )
+            logger.info("✅ Заголовок введен")
+            time.sleep(2)
+            
+            # Контент
+            try:
+                iframe = self.driver.find_element(By.CSS_SELECTOR, "iframe")
+                self.driver.switch_to.frame(iframe)
+                content_body = self.driver.find_element(By.TAG_NAME, "body")
+                content_body.click()
+                self.driver.execute_script(
+                    "arguments[0].innerHTML = arguments[1];", 
+                    content_body, 
+                    content[:10000].replace('\n', '<br>')
+                )
+                self.driver.switch_to.default_content()
+                logger.info("✅ Контент введен")
+            except Exception as e:
+                logger.warning(f"⚠️ Не удалось ввести контент: {e}")
+            
+            time.sleep(2)
+            
+            # Выбираем рубрику "Новости"
+            try:
+                rubric = self.driver.find_element(By.ID, "rubric_id2")
+                rubric.click()
+                time.sleep(1)
+                news = self.driver.find_element(By.XPATH, "//option[@value='382235']")
+                news.click()
+                logger.info("✅ Рубрика 'Новости' выбрана")
+            except:
+                logger.warning("⚠️ Не удалось выбрать рубрику")
+            
+            # Вводим теги
+            try:
+                tags = self.driver.find_element(By.ID, "tag_list_input")
+                tags.clear()
+                tags.send_keys("новости, события, тест")
+                logger.info("✅ Теги введены")
+            except:
+                pass
+            
+            time.sleep(2)
+            
+            # Нажимаем кнопку публикации
+            try:
+                submit_btn = self.driver.find_element(By.ID, "button_create_pubs")
+                actions.move_to_element(submit_btn).perform()
+                time.sleep(1)
+                submit_btn.click()
+                logger.info("✅ Кнопка публикации нажата")
+            except:
+                try:
+                    submit_btn = self.driver.find_element(By.XPATH, "//button[contains(text(), 'Опубликовать')]")
+                    actions.move_to_element(submit_btn).perform()
+                    time.sleep(1)
+                    submit_btn.click()
+                    logger.info("✅ Кнопка публикации нажата")
+                except Exception as e:
+                    logger.error(f"❌ Не найдена кнопка публикации: {e}")
+                    return False
+            
+            # Ждем результат
+            time.sleep(5)
+            self.save_screenshot("3_after_publish.png")
+            
+            # Проверяем успех
+            page_source = self.driver.page_source.lower()
+            if 'успешно' in page_source or 'опубликован' in page_source:
+                logger.info("✅ ПОСТ УСПЕШНО ОПУБЛИКОВАН!")
+                return True
+            else:
+                logger.warning("⚠️ Пост отправлен, но подтверждение не найдено")
+                return True
+                
+        except Exception as e:
+            logger.error(f"❌ Ошибка публикации: {e}")
+            self.save_screenshot("publish_error.png")
             return False
