@@ -12,6 +12,7 @@ from modules.config import Config
 from modules.logger import setup_logging
 from modules.publication_api import PublicationAPI
 from modules.rubric_mapper import get_rubric_id
+import os  # Добавьте эту строку, если её нет
 
 # Настройка логирования
 logger = setup_logging()
