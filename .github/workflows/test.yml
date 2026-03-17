@@ -1,10 +1,66 @@
-name: Simple Test
+name: Test Auth with zapret
 
 on:
   workflow_dispatch:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - run: echo "Hello World"
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      
+      - name: Install Chrome
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y google-chrome-stable
+          google-chrome --version
+      
+      - name: Setup zapret
+        run: |
+          chmod +x ./setup_zapret.sh
+          sudo ./setup_zapret.sh
+      
+      - name: Run zapret
+        run: |
+          sudo /usr/local/bin/tpws --port=989 --bind-addr=127.0.0.1 --split-pos=2 --oob --disorder --daemon
+          echo "✅ zapret запущен"
+          sleep 3
+          ps aux | grep tpws
+      
+      - name: Test connection through zapret
+        run: |
+          echo "Проверяем доступ к 9111.ru через zapret..."
+          curl -I https://9111.ru --proxy 127.0.0.1:989 --connect-timeout 10 || echo "❌ Сайт недоступен"
+      
+      - name: Install Python dependencies
+        run: |
+          pip install selenium
+      
+      - name: Create screenshots dir
+        run: mkdir -p screenshots
+      
+      - name: Run test
+        env:
+          NINTH_EMAIL: ${{ secrets.NINTH_EMAIL }}
+          NINTH_PASSWORD: ${{ secrets.NINTH_PASSWORD }}
+        run: |
+          # Chrome будет использовать системные настройки
+          python src/poster.py
+      
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots
+          path: "*.png"
+      
+      - name: Cleanup
+        if: always()
+        run: |
+          sudo pkill tpws || true
