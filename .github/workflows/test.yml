@@ -26,10 +26,12 @@ jobs:
           chmod +x ./setup_zapret.sh
           sudo ./setup_zapret.sh
       
-      - name: Create fake TLS data
+      - name: Create fake TLS data with proper permissions
         run: |
-          # Создаем пустой файл для fake TLS
-          touch /tmp/fake_tls.bin
+          # Создаем файл в домашней директории и даем права
+          echo -n -e '\x16\x03\x01\x02\x00\x01\x00\x01\xfc\x03\x03' > /tmp/fake_tls.bin
+          sudo chmod 644 /tmp/fake_tls.bin
+          ls -la /tmp/fake_tls.bin
           echo "✅ Создан файл для fake TLS"
       
       - name: Run nfqws
@@ -70,3 +72,4 @@ jobs:
         if: always()
         run: |
           sudo pkill nfqws || true
+          rm -f /tmp/fake_tls.bin
