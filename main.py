@@ -30,109 +30,64 @@ def get_auth_class():
     return None
 
 
-def debug_telegram_module():
-    """Выводит отладочную информацию о модуле telegram_bot_parser"""
-    logger.info("🔍 Отладка модуля telegram_bot_parser:")
-    
-    # Смотрим все классы и функции в модуле
-    for attr_name in dir(tg_module):
-        if not attr_name.startswith('_'):
-            attr = getattr(tg_module, attr_name)
-            attr_type = type(attr).__name__
-            logger.info(f"  - {attr_name}: {attr_type}")
-    
-    # Проверяем наличие класса TelegramBotParser
-    if hasattr(tg_module, 'TelegramBotParser'):
-        ParserClass = tg_module.TelegramBotParser
-        logger.info(f"✅ Найден класс TelegramBotParser")
-        
-        # Смотрим методы класса
-        for method_name in dir(ParserClass):
-            if not method_name.startswith('_'):
-                method = getattr(ParserClass, method_name)
-                if callable(method):
-                    logger.info(f"    Метод: {method_name}")
-    else:
-        logger.error("❌ Класс TelegramBotParser не найден")
-
-
 def get_telegram_posts():
-    """Универсальная функция для получения постов из Telegram"""
+    """Получает посты из Telegram используя правильные методы"""
     logger.info("🤖 Попытка получить посты из Telegram...")
     
-    # Пробуем разные способы получить посты
+    if not hasattr(tg_module, 'TelegramBotParser'):
+        logger.error("❌ Класс TelegramBotParser не найден")
+        return []
     
-    # Способ 1: Если есть функция get_posts в модуле
-    if hasattr(tg_module, 'get_posts'):
-        try:
-            logger.info("Пробуем tg_module.get_posts()")
-            posts = tg_module.get_posts(Config.CHANNEL_ID, Config.TELEGRAM_TOKEN)
-            if posts:
-                logger.info(f"✅ Получено {len(posts)} постов через get_posts")
-                return posts
-        except Exception as e:
-            logger.warning(f"Не сработало: {e}")
+    ParserClass = tg_module.TelegramBotParser
     
-    # Способ 2: Если есть класс с методом parse
-    if hasattr(tg_module, 'TelegramBotParser'):
-        ParserClass = tg_module.TelegramBotParser
-        
-        # Пробуем разные сигнатуры конструктора
-        try:
-            logger.info("Пробуем parser = TelegramBotParser(token)")
-            parser = ParserClass(Config.TELEGRAM_TOKEN)
-            
-            # Пробуем разные методы получения постов
-            if hasattr(parser, 'get_posts'):
-                try:
-                    posts = parser.get_posts(Config.CHANNEL_ID)
-                    if posts:
-                        logger.info(f"✅ Получено {len(posts)} постов через parser.get_posts(channel_id)")
-                        return posts
-                except:
-                    pass
-                    
-            if hasattr(parser, 'parse'):
-                try:
-                    posts = parser.parse(Config.CHANNEL_ID)
-                    if posts:
-                        logger.info(f"✅ Получено {len(posts)} постов через parser.parse(channel_id)")
-                        return posts
-                except:
-                    pass
-                    
-        except Exception as e:
-            logger.warning(f"Не сработало с token: {e}")
-        
-        # Пробуем без аргументов
-        try:
-            logger.info("Пробуем parser = TelegramBotParser()")
-            parser = ParserClass()
-            
-            if hasattr(parser, 'get_posts'):
-                try:
-                    posts = parser.get_posts(Config.CHANNEL_ID)
-                    if posts:
-                        logger.info(f"✅ Получено {len(posts)} постов через parser.get_posts(channel_id)")
-                        return posts
-                except:
-                    pass
-                    
-        except Exception as e:
-            logger.warning(f"Не сработало без аргументов: {e}")
-    
-    # Способ 3: Пробуем напрямую импортировать функции
     try:
-        if hasattr(tg_module, 'parse_channel'):
-            logger.info("Пробуем tg_module.parse_channel()")
-            posts = tg_module.parse_channel(Config.CHANNEL_ID, Config.TELEGRAM_TOKEN)
-            if posts:
-                logger.info(f"✅ Получено {len(posts)} постов через parse_channel")
-                return posts
-    except:
-        pass
+        # Создаем парсер с обоими аргументами
+        logger.info(f"Создаем парсер с token и channel_id")
+        parser = ParserClass(Config.TELEGRAM_TOKEN, Config.CHANNEL_ID)
+        logger.info("✅ Парсер создан успешно")
+        
+        # Пробуем метод parse_channel_posts
+        if hasattr(parser, 'parse_channel_posts'):
+            logger.info("Вызываем parser.parse_channel_posts()")
+            try:
+                posts = parser.parse_channel_posts()
+                if posts:
+                    logger.info(f"✅ Получено {len(posts)} постов через parse_channel_posts()")
+                    return posts
+                else:
+                    logger.warning("parse_channel_posts() вернул пустой список")
+            except Exception as e:
+                logger.warning(f"Ошибка в parse_channel_posts(): {e}")
+        
+        # Пробуем метод get_updates
+        if hasattr(parser, 'get_updates'):
+            logger.info("Вызываем parser.get_updates()")
+            try:
+                updates = parser.get_updates()
+                if updates:
+                    logger.info(f"✅ Получено {len(updates)} обновлений")
+                    # Преобразуем updates в посты
+                    posts = []
+                    for update in updates:
+                        if 'message' in update:
+                            msg = update['message']
+                            post = {
+                                'title': msg.get('text', '')[:100],
+                                'content': msg.get('text', ''),
+                                'date': msg.get('date', '')
+                            }
+                            posts.append(post)
+                    if posts:
+                        logger.info(f"✅ Преобразовано {len(posts)} постов из get_updates")
+                        return posts
+            except Exception as e:
+                logger.warning(f"Ошибка в get_updates(): {e}")
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка при создании парсера: {e}")
+        logger.error(f"   Ожидаемая сигнатура: __init__(bot_token, channel_id)")
     
-    logger.warning("❌ Не удалось получить посты ни одним способом")
+    logger.warning("❌ Не удалось получить посты")
     return []
 
 
@@ -140,9 +95,6 @@ def main():
     logger.info("=" * 50)
     logger.info("🚀 Запуск 9111 Poster")
     logger.info("=" * 50)
-
-    # Отладка Telegram модуля
-    debug_telegram_module()
 
     # 1. Получаем класс авторизации
     AuthClass = get_auth_class()
@@ -176,9 +128,9 @@ def main():
     # Выводим информацию о первом посте для отладки
     if posts and len(posts) > 0:
         first_post = posts[0]
-        logger.info(f"Пример поста:")
-        logger.info(f"  Заголовок: {first_post.get('title', '')[:50]}...")
-        logger.info(f"  Контент: {first_post.get('content', '')[:50]}...")
+        logger.info(f"📄 Пример поста:")
+        logger.info(f"  Заголовок: {first_post.get('title', '')[:100]}")
+        logger.info(f"  Контент: {first_post.get('content', '')[:100]}...")
 
     # 4. Публикация
     try:
@@ -194,7 +146,7 @@ def main():
 
         successful = 0
         for i, post in enumerate(posts, 1):
-            logger.info(f"--- Пост {i}/{len(posts)} ---")
+            logger.info(f"--- 📝 Пост {i}/{len(posts)} ---")
             
             title = post.get("title", "")[:100]
             content = post.get("content", "")
