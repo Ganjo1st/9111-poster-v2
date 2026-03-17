@@ -40,74 +40,51 @@ def safe_get_attr(obj, attr_name, default=None):
     return default
 
 
-def safe_call_method(obj, method_name, *args, **kwargs):
-    """Безопасно вызывает метод объекта"""
-    if hasattr(obj, method_name) and callable(getattr(obj, method_name)):
-        try:
-            logger.info(f"📞 Вызываем {method_name}...")
-            result = getattr(obj, method_name)(*args, **kwargs)
-            logger.info(f"✅ {method_name} выполнен")
-            return result
-        except Exception as e:
-            logger.error(f"❌ Ошибка в {method_name}: {e}")
-            return None
-    else:
-        logger.warning(f"⚠️ Метод {method_name} не найден")
-        return None
-
-
-def get_session_from_cookies(cookies_path):
-    """Создает сессию из cookies файла"""
+def create_session_from_secrets():
+    """Создает сессию напрямую из секретов USER_HASH и UUK"""
     import requests
     
-    logger.info(f"🔄 Загружаем cookies из {cookies_path}")
+    logger.info("🔄 Создаем сессию из секретов USER_HASH и UUK")
     
-    if not os.path.exists(cookies_path):
-        logger.error(f"❌ Файл cookies не найден: {cookies_path}")
+    user_hash = Config.USER_HASH
+    uuk = Config.UUK
+    
+    if not user_hash or not uuk:
+        logger.error("❌ USER_HASH или UUK не заданы в секретах")
         return None
     
+    logger.info(f"✅ USER_HASH: {user_hash[:10]}...")
+    logger.info(f"✅ UUK: {uuk[:10]}...")
+    
+    session = requests.Session()
+    
+    # Добавляем cookies
+    session.cookies.set('user_hash', user_hash, domain='.9111.ru')
+    session.cookies.set('uuk', uuk, domain='.9111.ru')
+    
+    # Добавляем стандартные headers
+    session.headers.update({
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+    })
+    
+    # Проверяем сессию
     try:
-        with open(cookies_path, 'rb') as f:
-            cookies = pickle.load(f)
-        
-        logger.info(f"✅ Загружено {len(cookies)} cookies")
-        
-        session = requests.Session()
-        
-        # Добавляем cookies в сессию
-        for cookie in cookies:
-            session.cookies.set(
-                cookie['name'], 
-                cookie['value'],
-                domain=cookie.get('domain', '.9111.ru')
-            )
-            logger.debug(f"  Cookie: {cookie['name']}={cookie['value'][:20]}...")
-        
-        # Добавляем стандартные headers
-        session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-            'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
-            'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1',
-        })
-        
-        # Проверяем сессию
         test_response = session.get('https://9111.ru', allow_redirects=True, timeout=10)
         logger.info(f"🌐 Тестовый запрос вернул статус: {test_response.status_code}")
         
         if test_response.status_code == 200:
-            logger.info("✅ Сессия успешно создана из cookies")
+            logger.info("✅ Сессия успешно создана из секретов")
             return session
         else:
             logger.warning(f"⚠️ Сессия вернула статус {test_response.status_code}")
             return session  # Все равно возвращаем
-            
     except Exception as e:
-        logger.error(f"❌ Ошибка при загрузке cookies: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
-        return None
+        logger.warning(f"⚠️ Ошибка при проверке сессии: {e}")
+        return session  # Возвращаем даже если проверка не удалась
 
 
 def get_telegram_posts():
@@ -222,52 +199,16 @@ def main():
     logger.info("🚀 Запуск 9111 Poster")
     logger.info("=" * 50)
 
-    # 1. Получаем класс авторизации
-    AuthClass = get_auth_class()
-    if not AuthClass:
-        logger.error("❌ Не удалось найти класс авторизации")
+    # 1. Создаем сессию напрямую из секретов
+    session = create_session_from_secrets()
+    
+    if session is None:
+        logger.error("❌ Не удалось создать сессию из секретов")
         return
+    
+    logger.info("✅ Сессия создана успешно")
 
-    # 2. Создаем объект авторизации с email и password
-    try:
-        auth = AuthClass(Config.NINTH_EMAIL, Config.NINTH_PASSWORD)
-        logger.info("✅ Объект авторизации создан")
-        
-        # Проверяем наличие cookies файла
-        cookies_path = safe_get_attr(auth, 'cookies_file', 'sessions/cookies.pkl')
-        logger.info(f"📁 Путь к cookies: {cookies_path}")
-        
-        # Пробуем войти через cookies если файл существует
-        if os.path.exists(cookies_path):
-            logger.info("🍪 Найден файл cookies, пробуем login_with_cookies")
-            login_result = safe_call_method(auth, 'login_with_cookies', cookies_path)
-        else:
-            logger.info("🔐 Файл cookies не найден, пробуем login_with_credentials")
-            # login_with_credentials не принимает аргументы (данные уже в объекте)
-            login_result = safe_call_method(auth, 'login_with_credentials')
-        
-        if not login_result:
-            logger.error("❌ Ошибка авторизации")
-            return
-        
-        logger.info("✅ Авторизация выполнена успешно")
-        
-        # Создаем сессию из cookies файла
-        session = get_session_from_cookies(cookies_path)
-        
-        if session is None:
-            logger.error("❌ Не удалось создать сессию из cookies")
-            return
-        
-        logger.info("✅ Сессия создана успешно")
-        
-    except Exception as e:
-        logger.error(f"❌ Ошибка при авторизации: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
-        return
-
-    # 3. Парсинг Telegram
+    # 2. Парсинг Telegram
     posts = get_telegram_posts()
 
     if not posts:
@@ -276,7 +217,7 @@ def main():
 
     logger.info(f"✅ Получено {len(posts)} постов")
 
-    # 4. Публикация
+    # 3. Публикация
     try:
         pub_api = PublicationAPI(
             session=session,
