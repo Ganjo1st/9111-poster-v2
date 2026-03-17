@@ -1,7 +1,6 @@
 import os
 import sys
 import pickle
-import json
 from pathlib import Path
 
 # Добавляем путь к проекту
@@ -39,6 +38,56 @@ def safe_get_attr(obj, attr_name, default=None):
         if value is not None:
             return value
     return default
+
+
+def get_session_from_cookies(cookies_path):
+    """Создает сессию из cookies файла"""
+    import requests
+    
+    logger.info(f"🔄 Загружаем cookies из {cookies_path}")
+    
+    if not os.path.exists(cookies_path):
+        logger.error(f"❌ Файл cookies не найден: {cookies_path}")
+        return None
+    
+    try:
+        with open(cookies_path, 'rb') as f:
+            cookies = pickle.load(f)
+        
+        logger.info(f"✅ Загружено {len(cookies)} cookies")
+        
+        session = requests.Session()
+        
+        # Добавляем cookies в сессию
+        for cookie in cookies:
+            session.cookies.set(cookie['name'], cookie['value'])
+            logger.debug(f"  Cookie: {cookie['name']}={cookie['value'][:20]}...")
+        
+        # Добавляем стандартные headers
+        session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+            'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+        })
+        
+        # Проверяем сессию
+        test_response = session.get('https://9111.ru', allow_redirects=True, timeout=10)
+        logger.info(f"🌐 Тестовый запрос вернул статус: {test_response.status_code}")
+        
+        if test_response.status_code == 200:
+            logger.info("✅ Сессия успешно создана из cookies")
+            return session
+        else:
+            logger.warning(f"⚠️ Сессия вернула статус {test_response.status_code}")
+            return session  # Все равно возвращаем
+            
+    except Exception as e:
+        logger.error(f"❌ Ошибка при загрузке cookies: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return None
 
 
 def get_telegram_posts():
@@ -104,10 +153,6 @@ def get_telegram_posts():
                                     post['content'] = str(raw_post[content_key])
                                     break
                             
-                            # Если нашли caption но не нашли контент, используем caption как контент
-                            if 'caption' in raw_post and 'content' not in post:
-                                post['content'] = str(raw_post['caption'])
-                            
                             # Копируем остальные поля
                             for key, value in raw_post.items():
                                 if key not in ['title', 'content']:
@@ -163,7 +208,7 @@ def main():
         logger.error("❌ Не удалось найти класс авторизации")
         return
 
-    # 2. Авторизация - ИСПОЛЬЗУЕМ РЕАЛЬНУЮ СЕССИЮ
+    # 2. Авторизация
     try:
         auth = AuthClass(Config.NINTH_EMAIL, Config.NINTH_PASSWORD)
         
@@ -175,44 +220,18 @@ def main():
                 return
             logger.info("✅ Login выполнен успешно")
         
-        # Получаем сессию из объекта auth
-        session = None
+        # Получаем путь к cookies файлу
+        cookies_path = safe_get_attr(auth, 'cookies_file', 'sessions/cookies.pkl')
+        logger.info(f"📁 Путь к cookies: {cookies_path}")
         
-        # Пробуем разные способы получить сессию
-        if hasattr(auth, 'session') and auth.session:
-            session = auth.session
-            logger.info("✅ Найдена session в auth")
-        elif hasattr(auth, '_session') and auth._session:
-            session = auth._session
-            logger.info("✅ Найдена _session в auth")
-        elif hasattr(auth, 'get_session') and callable(auth.get_session):
-            try:
-                session = auth.get_session()
-                logger.info("✅ Получена session через get_session()")
-            except:
-                pass
+        # Создаем сессию из cookies
+        session = get_session_from_cookies(cookies_path)
         
         if session is None:
-            logger.error("❌ Не удалось получить session из объекта auth")
-            # Выводим доступные атрибуты для отладки
-            logger.info("Доступные атрибуты auth:")
-            for attr in dir(auth):
-                if not attr.startswith('_'):
-                    logger.info(f"  - {attr}")
+            logger.error("❌ Не удалось создать сессию из cookies")
             return
         
-        # Проверяем сессию
-        try:
-            test_response = session.get('https://9111.ru', allow_redirects=True, timeout=10)
-            logger.info(f"🌐 Тестовая сессия вернула статус: {test_response.status_code}")
-            if test_response.status_code == 200:
-                logger.info("✅ Сессия работает!")
-            else:
-                logger.warning(f"⚠️ Сессия вернула статус {test_response.status_code}")
-        except Exception as e:
-            logger.warning(f"⚠️ Ошибка при проверке сессии: {e}")
-        
-        logger.info("✅ Авторизация выполнена, сессия получена")
+        logger.info("✅ Сессия создана успешно")
         
     except Exception as e:
         logger.error(f"❌ Ошибка при авторизации: {e}")
@@ -229,11 +248,11 @@ def main():
 
     logger.info(f"✅ Получено {len(posts)} постов")
 
-    # 4. Публикация - ИСПОЛЬЗУЕМ РЕАЛЬНУЮ СЕССИЮ
+    # 4. Публикация
     try:
         pub_api = PublicationAPI(
-            session=session,  # Используем реальную сессию из auth
-            user_hash=Config.USER_HASH,  # На всякий случай передаем
+            session=session,
+            user_hash=Config.USER_HASH,
             uuk=Config.UUK
         )
 
