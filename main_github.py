@@ -31,7 +31,7 @@ def make_title_unique(title: str) -> str:
 
 
 def setup_driver():
-    """Настраивает Chrome driver для headless режима с максимальной эмуляцией браузера"""
+    """Настраивает Chrome driver для headless режима"""
     chrome_options = Options()
     
     # Основные аргументы
@@ -41,50 +41,32 @@ def setup_driver():
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--window-size=1920,1080")
     
-    # Реальный User-Agent как в вашем браузере
+    # Реальный User-Agent
     chrome_options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
     
     # Языковые настройки
     chrome_options.add_argument("--lang=ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")
-    chrome_options.add_argument("--accept-lang=ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")
     
     # Скрываем автоматизацию
     chrome_options.add_argument("--disable-blink-features=AutomationControlled")
     chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
     chrome_options.add_experimental_option('useAutomationExtension', False)
     
-    # Добавляем заголовки через предпочтения
-    prefs = {
-        "intl.accept_languages": "ru-RU,ru",
-        "credentials_enable_service": False
-    }
-    chrome_options.add_experimental_option("prefs", prefs)
-    
-    # Дополнительные аргументы для обхода блокировок
-    chrome_options.add_argument("--disable-web-security")
-    chrome_options.add_argument("--allow-running-insecure-content")
-    chrome_options.add_argument("--disable-client-side-phishing-detection")
-    chrome_options.add_argument("--disable-component-update")
-    
     driver = webdriver.Chrome(options=chrome_options)
-    
-    # Устанавливаем дополнительные заголовки через CDP
-    driver.execute_cdp_cmd('Network.setUserAgentOverride', {
-        "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        "acceptLanguage": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7"
-    })
     
     # Убираем флаг автоматизации
     driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-    driver.execute_script("Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]})")
-    driver.execute_script("Object.defineProperty(navigator, 'languages', {get: () => ['ru-RU', 'ru']})")
     
     return driver
 
 
-def add_cookies_from_file(driver, target_url):
-    """Добавляет куки после перехода на целевой URL"""
-    # Свежие куки из браузера
+def add_cookies_and_navigate(driver, target_url):
+    """
+    Правильная последовательность:
+    1. Сначала открываем домен (любую страницу)
+    2. Добавляем куки
+    3. Переходим на целевую страницу
+    """
     cookies = [
         {'name': 'user_hash', 'value': Config.USER_HASH, 'domain': '.9111.ru', 'path': '/'},
         {'name': 'uuk', 'value': 'cad1a52ec9d948e6cc9ef7cae9009203', 'domain': '.9111.ru', 'path': '/'},
@@ -93,16 +75,12 @@ def add_cookies_from_file(driver, target_url):
     ]
     
     logger.info("=" * 50)
-    logger.info(f"🌐 Переходим на {target_url}")
-    driver.get(target_url)
-    time.sleep(5)
-    
-    # Проверяем статус до добавления кук
-    if "403" in driver.title or "Forbidden" in driver.page_source:
-        logger.warning("⚠️ Получена 403 ошибка до добавления кук")
+    logger.info("🌐 ШАГ 1: Открываем главную страницу для установки домена...")
+    driver.get("https://9111.ru")
+    time.sleep(3)
     
     logger.info("=" * 50)
-    logger.info("🍪 Добавляем куки...")
+    logger.info("🍪 ШАГ 2: Добавляем куки...")
     for cookie in cookies:
         try:
             driver.add_cookie(cookie)
@@ -111,9 +89,8 @@ def add_cookies_from_file(driver, target_url):
             logger.warning(f"⚠️ Не удалось добавить куку {cookie['name']}: {e}")
     
     logger.info("=" * 50)
-    logger.info("🔄 Обновляем страницу...")
-    time.sleep(2)
-    driver.refresh()
+    logger.info(f"🌐 ШАГ 3: Переходим на целевую страницу {target_url}")
+    driver.get(target_url)
     time.sleep(5)
     
     current_url = driver.current_url
@@ -121,9 +98,9 @@ def add_cookies_from_file(driver, target_url):
     logger.info(f"📍 Текущий URL: {current_url}")
     logger.info(f"📄 Заголовок страницы: {page_title}")
     
-    # Проверяем наличие 403 после обновления
+    # Проверяем наличие 403
     if "403" in page_title or "Forbidden" in driver.page_source:
-        logger.error("❌ Страница всё ещё возвращает 403 Forbidden")
+        logger.error("❌ Получена ошибка 403 Forbidden")
         logger.error("   Возможно IP GitHub Actions заблокирован")
         return False
     
@@ -261,16 +238,16 @@ def get_telegram_posts():
 
 def main():
     logger.info("=" * 50)
-    logger.info("🚀 Запуск 9111 Poster (Selenium с полными заголовками)")
+    logger.info("🚀 Запуск 9111 Poster (Правильная последовательность: главная → куки → цель)")
     logger.info("=" * 50)
 
     # 1. Настраиваем драйвер
     driver = setup_driver()
     
     try:
-        # 2. Добавляем куки и проверяем доступ
+        # 2. Добавляем куки и переходим на целевую страницу
         target_url = "https://9111.ru/pubs/add/title/"
-        if not add_cookies_from_file(driver, target_url):
+        if not add_cookies_and_navigate(driver, target_url):
             logger.error("❌ Не удалось получить доступ к странице создания")
             return
         
