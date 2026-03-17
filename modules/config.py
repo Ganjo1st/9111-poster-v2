@@ -5,7 +5,7 @@ class Config:
     NINTH_EMAIL = os.getenv("NINTH_EMAIL")
     NINTH_PASSWORD = os.getenv("NINTH_PASSWORD")
     USER_HASH = os.getenv("USER_HASH")
-    UUK = os.getenv("UUK")
+    UUK = os.getenv("UUK")  # Это будет переопределено в коде
 
     # Telegram
     CHANNEL_ID = os.getenv("CHANNEL_ID")
