@@ -181,7 +181,6 @@ def main():
     try:
         posts = tg_parser.get_posts(
             channel_id=os.environ['CHANNEL_ID'],
-            token=os.environ['TELEGRAM_TOKEN'],
             limit=3
         )
         
