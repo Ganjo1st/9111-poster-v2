@@ -40,28 +40,34 @@ def safe_get_attr(obj, attr_name, default=None):
     return default
 
 
-def get_session_from_cookies(cookies_path):
-    """Создает сессию из cookies файла"""
+def get_session_from_driver(driver):
+    """Создает сессию из Selenium driver"""
     import requests
     
-    logger.info(f"🔄 Загружаем cookies из {cookies_path}")
-    
-    if not os.path.exists(cookies_path):
-        logger.error(f"❌ Файл cookies не найден: {cookies_path}")
-        return None
+    logger.info("🔄 Создаем сессию из Selenium driver")
     
     try:
-        with open(cookies_path, 'rb') as f:
-            cookies = pickle.load(f)
+        # Получаем cookies из driver
+        cookies = driver.get_cookies()
+        logger.info(f"📦 Получено {len(cookies)} cookies из driver")
         
-        logger.info(f"✅ Загружено {len(cookies)} cookies")
+        if not cookies:
+            logger.error("❌ Driver не вернул cookies")
+            return None
+        
+        # Показываем первые несколько cookies для отладки
+        for i, cookie in enumerate(cookies[:3]):
+            logger.info(f"  Cookie {i+1}: {cookie.get('name')}={cookie.get('value', '')[:20]}...")
         
         session = requests.Session()
         
         # Добавляем cookies в сессию
         for cookie in cookies:
-            session.cookies.set(cookie['name'], cookie['value'])
-            logger.debug(f"  Cookie: {cookie['name']}={cookie['value'][:20]}...")
+            session.cookies.set(
+                cookie['name'], 
+                cookie['value'],
+                domain=cookie.get('domain', '.9111.ru')
+            )
         
         # Добавляем стандартные headers
         session.headers.update({
@@ -77,14 +83,14 @@ def get_session_from_cookies(cookies_path):
         logger.info(f"🌐 Тестовый запрос вернул статус: {test_response.status_code}")
         
         if test_response.status_code == 200:
-            logger.info("✅ Сессия успешно создана из cookies")
+            logger.info("✅ Сессия успешно создана из driver")
             return session
         else:
             logger.warning(f"⚠️ Сессия вернула статус {test_response.status_code}")
             return session  # Все равно возвращаем
             
     except Exception as e:
-        logger.error(f"❌ Ошибка при загрузке cookies: {e}")
+        logger.error(f"❌ Ошибка при создании сессии из driver: {e}")
         import traceback
         logger.error(traceback.format_exc())
         return None
@@ -220,15 +226,32 @@ def main():
                 return
             logger.info("✅ Login выполнен успешно")
         
-        # Получаем путь к cookies файлу
-        cookies_path = safe_get_attr(auth, 'cookies_file', 'sessions/cookies.pkl')
-        logger.info(f"📁 Путь к cookies: {cookies_path}")
+        # Получаем driver из объекта auth
+        driver = safe_get_attr(auth, 'driver')
         
-        # Создаем сессию из cookies
-        session = get_session_from_cookies(cookies_path)
+        if driver is None:
+            logger.error("❌ Driver не найден в объекте auth")
+            # Выводим доступные атрибуты для отладки
+            logger.info("Доступные атрибуты auth:")
+            for attr in dir(auth):
+                if not attr.startswith('_'):
+                    logger.info(f"  - {attr}")
+            return
+        
+        logger.info(f"🚗 Driver найден: {driver}")
+        
+        # Проверяем текущий URL
+        try:
+            current_url = driver.current_url
+            logger.info(f"🌐 Текущий URL driver: {current_url}")
+        except:
+            logger.warning("⚠️ Не удалось получить текущий URL")
+        
+        # Создаем сессию из driver
+        session = get_session_from_driver(driver)
         
         if session is None:
-            logger.error("❌ Не удалось создать сессию из cookies")
+            logger.error("❌ Не удалось создать сессию из driver")
             return
         
         logger.info("✅ Сессия создана успешно")
