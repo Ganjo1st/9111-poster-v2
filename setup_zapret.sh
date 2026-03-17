@@ -9,7 +9,6 @@ wget https://github.com/bol-van/zapret/releases/download/v70/zapret-v70.tar.gz
 tar -xzf zapret-v70.tar.gz
 cd zapret-v70
 
-# Копируем бинарники для Linux x86_64
 if [ -f "binaries/x86_64/tpws" ] && [ -f "binaries/x86_64/nfqws" ]; then
     echo "✅ Найдены бинарники для x86_64"
     sudo cp binaries/x86_64/tpws /usr/local/bin/
