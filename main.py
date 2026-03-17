@@ -1,154 +1,131 @@
-#!/usr/bin/env python3
-"""
-9111.ru Poster - Автоматическая публикация из Telegram
-Запускается как GitHub Action
-"""
-
-import os
-import sys
-import time
-import json
+import asyncio
 import logging
-import random
-from datetime import datetime
+import sys
+import os
 from pathlib import Path
 
-# Добавляем пути для импортов
+# Добавляем путь к проекту для импортов
 sys.path.insert(0, str(Path(__file__).parent))
 
 from modules.auth import Auth9111
 from modules.bypass import BypassManager
-from modules.telegram_bot import TelegramBot
-from modules.publication_github import PublicationManager
+from modules.config import Config
 from modules.logger import setup_logging, log_function_call
-from modules.utils import cleanup_temp_files
+from modules.publication_api import PublicationAPI
+from modules.rubric_mapper import get_rubric_id
+from modules.telegram_parser import TelegramRSSParser
+from modules import utils
 
 # Настройка логирования
 logger = setup_logging()
 
 
-class Poster9111:
-    """Основной класс приложения"""
+@log_function_call
+def main():
+    """Основная функция."""
+    logger.info("=" * 50)
+    logger.info("🚀 Запуск 9111 Poster v2 (GitHub Actions Edition)")
+    logger.info("=" * 50)
+
+    # 1. Получаем секреты из окружения
+    email = os.getenv("NINTH_EMAIL")
+    password = os.getenv("NINTH_PASSWORD")
+    channel_id = os.getenv("CHANNEL_ID")
+    telegram_token = os.getenv("TELEGRAM_TOKEN")
+    user_hash = os.getenv("USER_HASH")
+    uuk = os.getenv("UUK")
+
+    if not all([email, password, channel_id, user_hash, uuk]):
+        logger.error("❌ Не все секреты установлены!")
+        return
+
+    # 2. Инициализация менеджера обхода блокировок
+    bypass = BypassManager(user_agent=Config.USER_AGENT_9111)
+
+    # 3. Авторизация на 9111.ru
+    auth = Auth9111(bypass)
+    if not auth.login(email, password):
+        logger.error("❌ Не удалось авторизоваться на 9111.ru. Выход.")
+        return
+
+    logger.info("✅ Успешная авторизация на 9111.ru")
+
+    # 4. Парсинг Telegram канала
+    logger.info(f"📱 Парсинг Telegram канала: {channel_id}")
+    tg_parser = TelegramRSSParser()
     
-    def __init__(self):
-        self.env = self._load_env()
-        self.bypass = None
-        self.auth = None
-        self.telegram = None
+    try:
+        # Используем RSS парсер (уже есть в проекте)
+        posts = tg_parser.get_posts(channel_id, limit=3)
         
-    def _load_env(self):
-        """Загрузка переменных окружения"""
-        required = ['NINTH_EMAIL', 'NINTH_PASSWORD', 'TELEGRAM_TOKEN', 'CHANNEL_ID']
-        env = {}
-        
-        for key in required:
-            value = os.getenv(key)
-            if not value:
-                raise ValueError(f"Отсутствует обязательная переменная: {key}")
-            env[key] = value
+        if not posts:
+            logger.warning("❌ Не получено постов из Telegram.")
+            return
             
-        # Опциональные переменные
-        env['USER_HASH'] = os.getenv('USER_HASH', '')
-        env['UUK'] = os.getenv('UUK', '')
+        logger.info(f"✅ Получено {len(posts)} постов из Telegram")
+    except Exception as e:
+        logger.exception(f"❌ Ошибка парсинга Telegram: {e}")
+        return
+
+    # 5. Инициализация API публикаций
+    pub_api = PublicationAPI(
+        session=auth.session,
+        user_hash=user_hash,
+        uuk=uuk
+    )
+
+    # 6. Публикация каждого поста
+    successful = 0
+    for i, post in enumerate(posts, 1):
+        logger.info(f"--- 📝 Обработка поста {i}/{len(posts)} ---")
         
-        return env
+        # Извлекаем данные поста
+        title = post.get("title", "")[:100]  # Первые 100 символов как заголовок
+        content = post.get("content", "")
+        image_url = post.get("image_url")
+        
+        # Скачиваем изображение, если есть
+        image_path = None
+        if image_url:
+            image_path = utils.download_image(image_url, f"post_{i}")
+        
+        # Получаем ID рубрики (по умолчанию "новости")
+        rubric_id = get_rubric_id("новости")
+        
+        # Формируем теги
+        tags = "новости, закон, право"
+        
+        # Создаем публикацию
+        logger.info(f"Заголовок: {title}")
+        success = pub_api.create_publication(
+            title=title,
+            content=content,
+            rubric_name="новости",
+            tags=tags,
+            image_path=image_path
+        )
+        
+        if success:
+            successful += 1
+            logger.info(f"✅ Пост {i} успешно опубликован")
+        else:
+            logger.error(f"❌ Ошибка публикации поста {i}")
+        
+        # Удаляем временное изображение
+        if image_path:
+            utils.safe_remove_file(image_path)
+        
+        # Небольшая задержка между публикациями
+        import time
+        time.sleep(5)
+
+    # 7. Очистка
+    utils.cleanup_temp_files()
     
-    @log_function_call
-    def run(self):
-        """Основной метод выполнения"""
-        start_time = time.time()
-        logger.info("=" * 60)
-        logger.info("🚀 Запуск 9111 Poster в GitHub Actions")
-        logger.info(f"📅 Время: {datetime.now().isoformat()}")
-        logger.info("=" * 60)
-        
-        try:
-            # 1. Инициализация
-            self.bypass = BypassManager()
-            
-            # 2. Авторизация на 9111.ru
-            logger.info("🔐 Авторизация на 9111.ru...")
-            self.auth = Auth9111(self.bypass)
-            
-            auth_success = self.auth.login(
-                self.env['NINTH_EMAIL'], 
-                self.env['NINTH_PASSWORD']
-            )
-            
-            if not auth_success:
-                logger.error("❌ Не удалось авторизоваться на 9111.ru")
-                return False
-                
-            logger.info("✅ Успешная авторизация")
-            
-            # 3. Получение постов из Telegram
-            logger.info("📱 Получение постов из Telegram...")
-            self.telegram = TelegramBot(self.env['TELEGRAM_TOKEN'])
-            
-            posts = self.telegram.get_channel_posts(
-                channel_id=self.env['CHANNEL_ID'],
-                limit=3  # По 3 поста за запуск
-            )
-            
-            if not posts:
-                logger.warning("⚠️ Нет новых постов в Telegram")
-                return True
-                
-            logger.info(f"📦 Получено {len(posts)} постов")
-            
-            # 4. Публикация каждого поста
-            logger.info("📤 Начало публикации...")
-            
-            # Создаем менеджер публикаций
-            pub_manager = PublicationManager(
-                auth_session=self.auth,
-                bypass=self.bypass,
-                user_hash=self.env['USER_HASH'],
-                uuk=self.env['UUK']
-            )
-            
-            success_count = 0
-            for i, post in enumerate(posts, 1):
-                logger.info(f"--- Пост {i}/{len(posts)} ---")
-                
-                result = pub_manager.publish_post(
-                    title=post['title'],
-                    content=post['content'],
-                    image_url=post.get('image_url'),
-                    tags=post.get('tags', 'новости, актуально')
-                )
-                
-                if result:
-                    success_count += 1
-                    logger.info(f"✅ Пост {i} опубликован")
-                else:
-                    logger.error(f"❌ Ошибка публикации поста {i}")
-                
-                # Пауза между постами
-                if i < len(posts):
-                    time.sleep(random.randint(10, 20))
-            
-            # 5. Итоги
-            elapsed = time.time() - start_time
-            logger.info("=" * 60)
-            logger.info(f"📊 Итоги выполнения:")
-            logger.info(f"   ✅ Успешно: {success_count}/{len(posts)}")
-            logger.info(f"   ⏱️ Время: {elapsed:.1f} сек")
-            logger.info("=" * 60)
-            
-            return success_count > 0
-            
-        except Exception as e:
-            logger.exception(f"💥 Критическая ошибка: {e}")
-            return False
-            
-        finally:
-            # Очистка временных файлов
-            cleanup_temp_files()
-            logger.info("🧹 Временные файлы очищены")
+    logger.info("=" * 50)
+    logger.info(f"📊 Итог: {successful}/{len(posts)} постов опубликовано")
+    logger.info("=" * 50)
 
 
 if __name__ == "__main__":
-    poster = Poster9111()
-    success = poster.run()
-    sys.exit(0 if success else 1)
+    main()
