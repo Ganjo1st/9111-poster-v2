@@ -52,7 +52,7 @@ def setup_driver():
     return driver
 
 
-def add_cookies_from_file(driver, cookies_file="sessions/cookies.pkl"):
+def add_cookies_from_file(driver):
     """Добавляет куки из файла в driver"""
     cookies = [
         {'name': 'user_hash', 'value': Config.USER_HASH, 'domain': '.9111.ru', 'path': '/'},
@@ -62,8 +62,9 @@ def add_cookies_from_file(driver, cookies_file="sessions/cookies.pkl"):
     ]
     
     # Сначала открываем домен, чтобы можно было добавить куки
+    logger.info("🌐 Открываем главную страницу для установки кук...")
     driver.get("https://9111.ru")
-    time.sleep(2)
+    time.sleep(3)
     
     for cookie in cookies:
         try:
@@ -76,7 +77,8 @@ def add_cookies_from_file(driver, cookies_file="sessions/cookies.pkl"):
     time.sleep(3)
     
     # Проверяем, авторизованы ли мы
-    if "user_hash" in driver.page_source or Config.USER_HASH in driver.page_source:
+    page_source = driver.page_source
+    if Config.USER_HASH in page_source or "user_hash" in page_source:
         logger.info("✅ Успешно авторизованы через куки")
         return True
     else:
@@ -85,79 +87,195 @@ def add_cookies_from_file(driver, cookies_file="sessions/cookies.pkl"):
 
 
 def create_publication(driver, title: str, content: str, rubric_name: str = "новости", tags: str = ""):
-    """Создает публикацию через Selenium"""
+    """Создает публикацию через Selenium с подробной отладкой"""
+    timestamp = int(time.time())
+    
     try:
         # 1. Переходим на страницу создания
-        logger.info("Переходим на страницу создания...")
+        logger.info("=" * 50)
+        logger.info("➡️ ШАГ 1: Переходим на страницу создания...")
         driver.get("https://9111.ru/pubs/add/")
-        time.sleep(3)
-        
-        # 2. Выбираем категорию "Новость, статья"
-        try:
-            news_link = WebDriverWait(driver, 10).until(
-                EC.element_to_be_clickable((By.XPATH, "//a[contains(text(), 'Новость, статья')]"))
-            )
-            news_link.click()
-            time.sleep(3)
-        except:
-            # Возможно уже на странице создания
-            driver.get("https://9111.ru/pubs/add/title/")
-            time.sleep(3)
-        
-        # 3. Вводим заголовок
-        title_div = WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.ID, "topic_name"))
-        )
-        title_div.click()
-        title_div.clear()
-        title_div.send_keys(title)
-        time.sleep(1)
-        
-        # 4. Выбираем рубрику
-        rubric_select = driver.find_element(By.ID, "rubric_id2")
-        rubric_id = get_rubric_id(rubric_name)
-        driver.execute_script(
-            "arguments[0].value = arguments[1]; arguments[0].dispatchEvent(new Event('change'))",
-            rubric_select,
-            str(rubric_id)
-        )
-        time.sleep(1)
-        
-        # 5. Вводим текст
-        editor = driver.find_element(By.ID, "lite_editor")
-        editor.click()
-        editor.send_keys(content)
-        time.sleep(1)
-        
-        # 6. Вводим теги
-        tags_input = driver.find_element(By.ID, "tag_list_input")
-        tags_input.send_keys(tags)
-        time.sleep(1)
-        
-        # 7. Отправляем форму
-        submit_btn = driver.find_element(By.ID, "button_create_pubs")
-        submit_btn.click()
-        
-        # 8. Ждем результат
         time.sleep(5)
+        logger.info(f"   Текущий URL: {driver.current_url}")
+        logger.info(f"   Заголовок страницы: {driver.title}")
         
-        # Проверяем успех
+        # Сохраняем скриншот
+        screenshot1 = f"step1_main_{timestamp}.png"
+        driver.save_screenshot(screenshot1)
+        logger.info(f"   📸 Скриншот сохранен: {screenshot1}")
+        
+        # 2. Ищем ссылку на создание новости
+        logger.info("➡️ ШАГ 2: Ищем ссылку 'Новость, статья'...")
+        try:
+            # Пробуем найти по разным вариантам текста
+            xpath_variants = [
+                "//a[contains(text(), 'Новость')]",
+                "//a[contains(text(), 'новость')]",
+                "//a[contains(text(), 'статья')]",
+                "//a[contains(text(), 'Статья')]",
+                "//a[contains(@href, 'title')]"
+            ]
+            
+            found = False
+            for xpath in xpath_variants:
+                elements = driver.find_elements(By.XPATH, xpath)
+                if elements:
+                    logger.info(f"   Найдено {len(elements)} элементов по XPath: {xpath}")
+                    elements[0].click()
+                    logger.info(f"   ✅ Кликнули по элементу")
+                    found = True
+                    break
+            
+            if not found:
+                logger.warning("   ⚠️ Ссылка не найдена, переходим напрямую")
+                driver.get("https://9111.ru/pubs/add/title/")
+            
+            time.sleep(5)
+            
+        except Exception as e:
+            logger.error(f"   ❌ Ошибка при выборе категории: {e}")
+            driver.get("https://9111.ru/pubs/add/title/")
+            time.sleep(5)
+        
+        logger.info(f"   Текущий URL после выбора: {driver.current_url}")
+        screenshot2 = f"step2_after_category_{timestamp}.png"
+        driver.save_screenshot(screenshot2)
+        logger.info(f"   📸 Скриншот сохранен: {screenshot2}")
+        
+        # 3. Проверяем наличие формы
+        logger.info("➡️ ШАГ 3: Проверяем наличие формы...")
+        try:
+            form = driver.find_element(By.ID, "form_create_topic_group")
+            logger.info("   ✅ Форма найдена")
+            
+            # Сохраняем HTML формы для отладки
+            with open(f"form_html_{timestamp}.html", "w", encoding="utf-8") as f:
+                f.write(form.get_attribute('outerHTML'))
+            logger.info(f"   📄 HTML формы сохранен")
+            
+        except NoSuchElementException:
+            logger.error("   ❌ Форма не найдена!")
+            logger.error(f"   Полный HTML страницы сохранен")
+            with open(f"page_no_form_{timestamp}.html", "w", encoding="utf-8") as f:
+                f.write(driver.page_source)
+            driver.save_screenshot(f"error_no_form_{timestamp}.png")
+            return False
+        
+        # 4. Вводим заголовок
+        logger.info("➡️ ШАГ 4: Вводим заголовок...")
+        try:
+            title_div = WebDriverWait(driver, 10).until(
+                EC.presence_of_element_located((By.ID, "topic_name"))
+            )
+            title_div.click()
+            title_div.clear()
+            title_div.send_keys(title)
+            logger.info(f"   ✅ Заголовок введен: {title}")
+            time.sleep(2)
+        except Exception as e:
+            logger.error(f"   ❌ Ошибка при вводе заголовка: {e}")
+            driver.save_screenshot(f"error_title_{timestamp}.png")
+            return False
+        
+        # 5. Выбираем рубрику
+        logger.info("➡️ ШАГ 5: Выбираем рубрику...")
+        try:
+            rubric_select = driver.find_element(By.ID, "rubric_id2")
+            rubric_id = get_rubric_id(rubric_name)
+            driver.execute_script(
+                "arguments[0].value = arguments[1]; arguments[0].dispatchEvent(new Event('change'))",
+                rubric_select,
+                str(rubric_id)
+            )
+            logger.info(f"   ✅ Рубрика выбрана: {rubric_name} (ID: {rubric_id})")
+            time.sleep(2)
+        except Exception as e:
+            logger.error(f"   ❌ Ошибка при выборе рубрики: {e}")
+            driver.save_screenshot(f"error_rubric_{timestamp}.png")
+            return False
+        
+        # 6. Вводим текст
+        logger.info("➡️ ШАГ 6: Вводим текст...")
+        try:
+            editor = driver.find_element(By.ID, "lite_editor")
+            editor.click()
+            editor.send_keys(content)
+            logger.info(f"   ✅ Текст введен (длина: {len(content)} символов)")
+            time.sleep(2)
+        except Exception as e:
+            logger.error(f"   ❌ Ошибка при вводе текста: {e}")
+            driver.save_screenshot(f"error_content_{timestamp}.png")
+            return False
+        
+        # 7. Вводим теги
+        logger.info("➡️ ШАГ 7: Вводим теги...")
+        try:
+            tags_input = driver.find_element(By.ID, "tag_list_input")
+            tags_input.clear()
+            tags_input.send_keys(tags)
+            logger.info(f"   ✅ Теги введены: {tags}")
+            time.sleep(2)
+        except Exception as e:
+            logger.warning(f"   ⚠️ Ошибка при вводе тегов: {e}")
+            # Не критично, продолжаем
+        
+        screenshot_before_submit = f"step_before_submit_{timestamp}.png"
+        driver.save_screenshot(screenshot_before_submit)
+        logger.info(f"   📸 Скриншот перед отправкой: {screenshot_before_submit}")
+        
+        # 8. Отправляем форму
+        logger.info("➡️ ШАГ 8: Отправляем форму...")
+        try:
+            submit_btn = driver.find_element(By.ID, "button_create_pubs")
+            # Прокручиваем к кнопке
+            driver.execute_script("arguments[0].scrollIntoView(true);", submit_btn)
+            time.sleep(1)
+            submit_btn.click()
+            logger.info("   ✅ Кнопка нажата")
+            time.sleep(5)
+        except Exception as e:
+            logger.error(f"   ❌ Ошибка при нажатии кнопки: {e}")
+            driver.save_screenshot(f"error_submit_{timestamp}.png")
+            return False
+        
+        # 9. Проверяем результат
+        logger.info("➡️ ШАГ 9: Проверяем результат...")
+        final_url = driver.current_url
         page_source = driver.page_source.lower()
-        if "спасибо" in page_source or "публикация успешно" in page_source:
-            logger.info("✅ Публикация успешно создана!")
+        
+        screenshot_final = f"final_result_{timestamp}.png"
+        driver.save_screenshot(screenshot_final)
+        logger.info(f"   📸 Финальный скриншот: {screenshot_final}")
+        logger.info(f"   URL после отправки: {final_url}")
+        
+        # Сохраняем HTML ответа
+        with open(f"response_page_{timestamp}.html", "w", encoding="utf-8") as f:
+            f.write(driver.page_source)
+        logger.info(f"   📄 HTML ответа сохранен")
+        
+        # Проверяем признаки успеха
+        if "спасибо" in page_source:
+            logger.info("✅ НАЙДЕНО: 'спасибо'")
+            return True
+        elif "публикация успешно" in page_source:
+            logger.info("✅ НАЙДЕНО: 'публикация успешно'")
+            return True
+        elif "успешно добавлена" in page_source:
+            logger.info("✅ НАЙДЕНО: 'успешно добавлена'")
+            return True
+        elif "опубликована" in page_source:
+            logger.info("✅ НАЙДЕНО: 'опубликована'")
             return True
         elif "уникален" in page_source:
-            logger.warning("⚠️ Заголовок не уникален")
+            logger.warning("⚠️ НАЙДЕНО: заголовок не уникален")
             return False
         else:
-            logger.error("❌ Неизвестная ошибка")
-            # Делаем скриншот для отладки
-            driver.save_screenshot(f"error_{int(time.time())}.png")
+            logger.error("❌ Не найдено признаков успеха или ошибки")
             return False
             
     except Exception as e:
-        logger.error(f"❌ Ошибка при создании публикации: {e}")
-        driver.save_screenshot(f"error_{int(time.time())}.png")
+        logger.error(f"❌ Общая ошибка при создании публикации: {e}")
+        driver.save_screenshot(f"error_general_{timestamp}.png")
         return False
 
 
@@ -171,7 +289,7 @@ def get_telegram_posts():
         raw_posts = parser.parse_channel_posts()
         
         if raw_posts:
-            logger.info(f"📦 Получено {len(raw_posts)} постов")
+            logger.info(f"📦 Получено {len(raw_posts)} сырых постов")
             
             posts = []
             for raw in raw_posts:
@@ -182,6 +300,7 @@ def get_telegram_posts():
                     }
                     if post['content']:
                         posts.append(post)
+                        logger.info(f"  Пост: {post['title'][:30]}...")
             
             logger.info(f"✅ Преобразовано {len(posts)} постов")
             return posts
@@ -194,7 +313,7 @@ def get_telegram_posts():
 
 def main():
     logger.info("=" * 50)
-    logger.info("🚀 Запуск 9111 Poster (Selenium с куками)")
+    logger.info("🚀 Запуск 9111 Poster (Selenium с подробной отладкой)")
     logger.info("=" * 50)
 
     # 1. Настраиваем драйвер
@@ -202,8 +321,7 @@ def main():
     
     try:
         # 2. Добавляем куки
-        if not add_cookies_from_file(driver):
-            logger.warning("⚠️ Продолжаем, но возможно не авторизованы")
+        add_cookies_from_file(driver)
         
         # 3. Получаем посты
         posts = get_telegram_posts()
@@ -216,7 +334,9 @@ def main():
         # 4. Публикуем каждый пост
         successful = 0
         for i, post in enumerate(posts, 1):
-            logger.info(f"--- 📝 Пост {i}/{len(posts)} ---")
+            logger.info("=" * 50)
+            logger.info(f"📝 Пост {i}/{len(posts)}")
+            logger.info("=" * 50)
             
             title = post.get("title", "").strip()
             content = post.get("content", "").strip()
@@ -227,7 +347,8 @@ def main():
             
             # Делаем заголовок уникальным
             unique_title = make_title_unique(title)
-            logger.info(f"Заголовок: {unique_title}")
+            logger.info(f"Оригинальный заголовок: {title}")
+            logger.info(f"Уникальный заголовок: {unique_title}")
             
             success = create_publication(
                 driver,
@@ -246,7 +367,8 @@ def main():
             # Небольшая пауза между постами
             time.sleep(5)
         
-        logger.info(f"📊 Итог: {successful}/{len(posts)}")
+        logger.info("=" * 50)
+        logger.info(f"📊 ИТОГ: {successful}/{len(posts)}")
         logger.info("=" * 50)
         
     finally:
