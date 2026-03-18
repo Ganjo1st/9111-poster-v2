@@ -3,44 +3,46 @@
 
 """
 Модуль авторизации на 9111.ru.
-Использует методы из рабочего проекта для входа с обходом блокировок.
+Рабочая версия из проекта 9111-poster-v2-main.
 """
 
 import logging
 import time
-import requests
+import pickle
+import json
+import re
 from typing import Optional, Dict, Tuple
-from fake_useragent import UserAgent
 
-from modules.bypass import BypassManager
+import requests
+from fake_useragent import UserAgent
 
 logger = logging.getLogger(__name__)
 
 class Auth9111:
-    """Класс для авторизации на 9111.ru с обходом блокировок."""
+    """Класс для авторизации на 9111.ru."""
     
     BASE_URL = "https://9111.ru"
     LOGIN_URL = f"{BASE_URL}/login/"
     PROFILE_URL = f"{BASE_URL}/my/"
     
     def __init__(self):
-        self.bypass = BypassManager()
         self.session = requests.Session()
         self.ua = UserAgent()
         self._setup_session()
     
     def _setup_session(self):
-        """Настраивает сессию с заголовками для обхода блокировок."""
-        self.session.headers.update(self.bypass.get_bypass_headers())
-        
-        # Проверяем, не заблокирован ли домен
-        if self.bypass.is_blocked('9111.ru'):
-            logger.warning("⚠️ Домен 9111.ru в черном списке, требуется обход")
-            # Здесь можно добавить логику для использования прокси или VPN
+        """Настраивает сессию с заголовками как в рабочем проекте."""
+        self.session.headers.update({
+            'User-Agent': self.ua.random,
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+        })
     
     def _get_csrf_token(self, html: str) -> Optional[str]:
         """Извлекает CSRF токен из HTML."""
-        import re
         # Ищем в скрытых полях формы
         match = re.search(r'name="csrf_token".*?value="([^"]+)"', html)
         if match:
@@ -67,7 +69,7 @@ class Auth9111:
         logger.info("🔑 Попытка входа на 9111.ru...")
         
         try:
-            # 1. Загружаем страницу входа для получения CSRF токена
+            # 1. Загружаем страницу входа
             logger.info("📡 Загрузка страницы входа...")
             response = self.session.get(self.LOGIN_URL, timeout=30)
             
@@ -130,14 +132,32 @@ class Auth9111:
             else:
                 logger.error(f"❌ Ошибка при отправке формы входа: {login_response.status_code}")
                 
-        except requests.exceptions.ProxyError as e:
-            logger.error(f"❌ Ошибка прокси: {e}")
         except requests.exceptions.Timeout:
             logger.error("❌ Таймаут при подключении")
         except Exception as e:
             logger.exception(f"❌ Неожиданная ошибка: {e}")
         
         return False
+    
+    def save_cookies(self, filepath: str = "cookies.pkl"):
+        """Сохраняет куки в файл."""
+        with open(filepath, 'wb') as f:
+            pickle.dump(self.session.cookies, f)
+        logger.info(f"💾 Cookies сохранены в {filepath}")
+    
+    def load_cookies(self, filepath: str = "cookies.pkl") -> bool:
+        """Загружает куки из файла."""
+        try:
+            with open(filepath, 'rb') as f:
+                self.session.cookies.update(pickle.load(f))
+            logger.info(f"📂 Cookies загружены из {filepath}")
+            return True
+        except FileNotFoundError:
+            logger.warning(f"⚠️ Файл cookies не найден: {filepath}")
+            return False
+        except Exception as e:
+            logger.error(f"❌ Ошибка загрузки cookies: {e}")
+            return False
     
     def is_authenticated(self) -> bool:
         """Проверяет, авторизована ли сессия."""
