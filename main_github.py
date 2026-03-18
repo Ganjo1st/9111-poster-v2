@@ -3,7 +3,7 @@
 
 """
 Основной скрипт для GitHub Actions.
-Использует только прокси из проверенного источника.
+Использует модули авторизации и обхода блокировок.
 """
 
 import os
@@ -11,22 +11,19 @@ import sys
 import logging
 import time
 import random
-import json
 from datetime import datetime
 from pathlib import Path
 
-# Добавляем путь к проекту
 sys.path.insert(0, str(Path(__file__).parent))
 
-# Импорты модулей проекта
-from modules.github_actions_auth import Auth9111
+from modules.auth import Auth9111
+from modules.bypass import BypassManager
 from modules.telegram_bot_parser import TelegramRSSParser
 from modules.publication_api import PublicationAPI
 from modules.rubric_mapper import get_rubric_id
 from modules.cookie_manager import CookieManager
 from modules.proxy_manager import ProxyManager
 
-# Настройка логирования
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -41,103 +38,99 @@ logger = logging.getLogger('9111_poster')
 def main():
     """Основная функция."""
     logger.info("=" * 60)
-    logger.info("🚀 ЗАПУСК 9111 POSTER")
-    logger.info("📋 Стратегия: проверенные прокси -> куки -> авторизация -> публикация")
+    logger.info("🚀 ЗАПУСК 9111 POSTER (GitHub Actions)")
     logger.info("=" * 60)
     
-    # Проверяем наличие всех необходимых секретов
+    # Проверяем секреты
     required_secrets = ['NINTH_EMAIL', 'NINTH_PASSWORD', 'CHANNEL_ID', 
-                        'TELEGRAM_TOKEN', 'USER_HASH', 'UUK']
+                        'USER_HASH', 'UUK']
     
     missing_secrets = [s for s in required_secrets if not os.environ.get(s)]
     
     if missing_secrets:
         logger.error(f"❌ Отсутствуют секреты: {', '.join(missing_secrets)}")
-        logger.error("Пожалуйста, добавьте их в настройках репозитория -> Secrets and variables -> Actions")
         return
+    
+    email = os.environ['NINTH_EMAIL']
+    password = os.environ['NINTH_PASSWORD']
+    channel_id = os.environ['CHANNEL_ID']
+    user_hash = os.environ['USER_HASH']
+    uuk = os.environ['UUK']
     
     logger.info("✅ Все секреты найдены")
     
-    # ШАГ 1: Загрузка кук из файлов
+    # ШАГ 1: Настройка обхода блокировок
     logger.info("=" * 60)
-    logger.info("🍪 ШАГ 1: Загрузка кук из файлов")
+    logger.info("🔧 ШАГ 1: Настройка обхода блокировок")
+    logger.info("=" * 60)
+    
+    bypass = BypassManager()
+    blacklist = bypass.load_blacklist()
+    if blacklist:
+        logger.info(f"📋 Загружен черный список ({len(blacklist)} записей)")
+    
+    # ШАГ 2: Загрузка кук
+    logger.info("=" * 60)
+    logger.info("🍪 ШАГ 2: Загрузка кук")
     logger.info("=" * 60)
     
     cookies = CookieManager.get_cookies_from_files(".")
     
     if not cookies:
-        logger.warning("⚠️ Куки не найдены в файлах, пробуем создать из секретов")
-        # Создаем куки из секретов
+        logger.warning("⚠️ Куки не найдены в файлах, создаем из секретов")
         cookies = CookieManager.create_cookies_from_parts(
-            user_hash=os.environ['USER_HASH'],
-            uuk=os.environ['UUK']
+            user_hash=user_hash,
+            uuk=uuk
         )
         logger.info(f"✅ Создано {len(cookies)} кук из секретов")
     
-    logger.info(f"🍪 Загруженные куки: {list(cookies.keys())}")
-    
-    # ШАГ 2: Поиск рабочего прокси из проверенного источника
+    # ШАГ 3: Поиск рабочего прокси
     logger.info("=" * 60)
-    logger.info("🔌 ШАГ 2: Поиск рабочего прокси")
+    logger.info("🔌 ШАГ 3: Поиск рабочего прокси")
     logger.info("=" * 60)
     
     proxy_manager = ProxyManager()
-    
-    # Ищем рабочий прокси
-    working_proxy = proxy_manager.find_working_proxy(max_attempts=None)  # Проверяем все
+    working_proxy = proxy_manager.find_working_proxy(max_attempts=None)
     
     if not working_proxy:
         logger.error("❌ НЕ НАЙДЕНО РАБОЧИХ ПРОКСИ!")
-        logger.error("Проверьте список прокси в репозитории Proctor")
         return
     
     logger.info(f"✅ Найден рабочий прокси: {working_proxy}")
     
-    # ШАГ 3: Создание сессии СРАЗУ с прокси
+    # ШАГ 4: Авторизация через прокси
     logger.info("=" * 60)
-    logger.info("🔑 ШАГ 3: Создание сессии с прокси и применение кук")
+    logger.info("🔑 ШАГ 4: Авторизация через прокси")
     logger.info("=" * 60)
     
-    # Получаем словарь прокси
     proxy_dict = proxy_manager.get_proxy_dict(working_proxy)
+    auth = Auth9111()
+    auth.session.proxies.update(proxy_dict)
+    logger.info("🔌 Прокси применен к сессии")
     
-    # Создаем сессию СРАЗУ с прокси
-    auth = Auth9111(proxies=proxy_dict)
-    
-    # Применяем куки к сессии
     CookieManager.apply_cookies_to_session(auth.session, cookies)
-    logger.info("🍪 Куки применены к сессии с прокси")
-    
-    # ШАГ 4: Проверка авторизации (уже через прокси)
-    logger.info("🔑 Проверка авторизации через прокси...")
+    logger.info("🍪 Куки применены к сессии")
     
     if auth.is_authenticated():
-        logger.info("✅ Авторизация подтверждена (куки работают через прокси)")
+        logger.info("✅ Авторизация подтверждена")
     else:
-        logger.warning("⚠️ Куки не работают через прокси, пробуем выполнить вход...")
-        logger.info("🔑 Выполняем вход через прокси...")
-        
-        if not auth.login(os.environ['NINTH_EMAIL'], os.environ['NINTH_PASSWORD']):
-            logger.error("❌ Не удалось авторизоваться даже через прокси")
+        logger.warning("⚠️ Куки не работают, пробуем выполнить вход...")
+        if not auth.login(email, password):
+            logger.error("❌ Не удалось авторизоваться")
             return
-        
-        logger.info("✅ Авторизация выполнена через прокси")
-        
-        # Сохраняем новые куки для будущих запусков
-        new_cookies = auth.session.cookies.get_dict()
-        logger.info(f"💾 Получены новые куки ({len(new_cookies)} шт.)")
+        logger.info("✅ Авторизация выполнена")
     
-    # ШАГ 5: Парсинг Telegram (без прокси)
+    # ШАГ 5: Парсинг Telegram
     logger.info("=" * 60)
     logger.info("📱 ШАГ 5: Парсинг Telegram канала")
     logger.info("=" * 60)
     
-    logger.info(f"📱 Канал: {os.environ['CHANNEL_ID']}")
+    logger.info(f"📱 Канал: {channel_id}")
     tg_parser = TelegramRSSParser()
     
     try:
         posts = tg_parser.get_posts(
-            channel_id=os.environ['CHANNEL_ID'],
+            channel_id=channel_id,
             limit=3
         )
         
@@ -147,35 +140,27 @@ def main():
         
         logger.info(f"✅ Получено {len(posts)} постов из Telegram")
         
-        # Выводим первые несколько постов для отладки
-        for i, post in enumerate(posts[:2], 1):
-            title = post.get('title', 'Без заголовка')
-            logger.info(f"📄 Пост {i}: {title[:100]}...")
-            
     except Exception as e:
         logger.exception(f"❌ Ошибка парсинга Telegram: {e}")
         return
     
-    # ШАГ 6: Публикация постов (уже через прокси)
+    # ШАГ 6: Публикация постов
     logger.info("=" * 60)
     logger.info("📝 ШАГ 6: Публикация постов")
     logger.info("=" * 60)
     
-    # Инициализация API публикаций
     pub_api = PublicationAPI(
         session=auth.session,
-        user_hash=os.environ['USER_HASH'],
-        uuk=os.environ['UUK']
+        user_hash=user_hash,
+        uuk=uuk
     )
     
-    # Публикация каждого поста
     successful = 0
     for i, post in enumerate(posts, 1):
         logger.info("-" * 50)
         logger.info(f"📝 Обработка поста {i}/{len(posts)}")
         logger.info("-" * 50)
         
-        # Извлекаем данные поста
         title = post.get('title', '')
         if not title:
             content_preview = post.get('content', '')[:100]
@@ -190,7 +175,6 @@ def main():
         if image_url:
             logger.info(f"🖼️ Есть изображение: {image_url[:50]}...")
         
-        # Создаем публикацию
         success = pub_api.create_publication(
             title=title,
             content=content,
@@ -205,23 +189,18 @@ def main():
         else:
             logger.error(f"❌ Ошибка публикации поста {i}")
         
-        # Задержка между публикациями
         if i < len(posts):
             delay = random.uniform(5, 10)
             logger.info(f"⏳ Ожидание {delay:.1f} секунд...")
             time.sleep(delay)
     
-    # Итоги
     logger.info("=" * 60)
     logger.info(f"📊 ИТОГ: {successful}/{len(posts)} постов опубликовано")
-    logger.info(f"📈 Процент успеха: {successful/len(posts)*100:.1f}%")
     logger.info("=" * 60)
 
 if __name__ == "__main__":
     try:
         main()
-    except KeyboardInterrupt:
-        logger.info("👋 Программа прервана пользователем")
     except Exception as e:
         logger.exception(f"💥 Критическая ошибка: {e}")
         sys.exit(1)
